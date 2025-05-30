@@ -1,0 +1,37 @@
+核心特性
+时空占用模型：
+
+以路径段（相邻节点间）为基本单位记录车辆占用
+实现精确的时间窗口冲突检测
+集成先到先行 + 优先级的混合仲裁机制
+
+三层架构：
+
+conflict_control.py - 路径段占用记录、冲突检测分类
+traffic_manager.py - 冲突解决策略执行、系统协调
+vehicle_scheduler.py - 任务分配、路径规划、时序计算
+
+冲突解决策略层次
+
+先到先行 - 同优先级车辆按请求时间排序
+优先级抢占 - 高优先级车辆优先通行
+时间调整 - 微调通过时间避免冲突
+备选骨干路径 - 切换到其他路径
+备选接入节点 - 同路径不同接入点
+紧急停车 - 最后手段
+
+与现有系统集成
+python# 集成到现有系统
+from enhanced_conflict_control import EnhancedBackboneConflictDetector
+from enhanced_traffic_manager import EnhancedBackboneTrafficManager  
+from enhanced_vehicle_scheduler import EnhancedBackboneVehicleScheduler
+
+# 创建系统
+system = create_integrated_backbone_system(env, backbone_network, path_planner)
+
+# 车辆任务分配（自动处理冲突）
+scheduler = system['vehicle_scheduler']
+success = scheduler.assign_task_with_corridors(task_id, vehicle_id)
+关键数据流
+任务创建 → 骨干路径规划 → 节点时序计算 → 路径段占用记录 → 冲突检测 → 
+先到先行+优先级排序 → 策略选择 → 冲突解决 → 路径更新
