@@ -14,7 +14,7 @@ import math
 import time
 import json
 from typing import Dict, List, Tuple, Optional
-
+import random
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QPropertyAnimation, QEasingCurve, QPointF, pyqtProperty
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
@@ -1503,7 +1503,7 @@ class EnhancedMineGUI(QMainWindow):
             QMessageBox.critical(self, "错误", f"批量任务分配失败: {str(e)}")
     
     def create_batch_tasks(self):
-        """创建批量任务（修复调试版）"""
+        """创建批量任务（支持随机循环）"""
         if not self.vehicle_scheduler or not self.env:
             QMessageBox.warning(self, "警告", "请先加载环境")
             return
@@ -1519,53 +1519,252 @@ class EnhancedMineGUI(QMainWindow):
             
             created_count = 0
             created_task_ids = []
-            import random
             
             available_vehicles = list(self.env.vehicles.keys())[:vehicle_count]
             
+            print(f"\n🎯 创建批量任务: {task_mode}")
+            print(f"   车辆数量: {len(available_vehicles)}")
+            print(f"   优先级: {priority.name}")
+            
             for vehicle_id in available_vehicles:
-                if task_mode == "装载→卸载→停车":
-                    if (self.env.loading_points and self.env.unloading_points):
-                        start_location = random.choice(self.env.loading_points)
-                        end_location = random.choice(self.env.unloading_points)
-                        
-                        task_id = self.vehicle_scheduler.create_transport_task(
-                            start_location=start_location,
-                            end_location=end_location,
-                            priority=priority,
-                            vehicle_id=vehicle_id
-                        )
-                        if task_id:
-                            created_count += 1
-                            created_task_ids.append(task_id)
-                            print(f"✅ 创建任务 {task_id} 给车辆 {vehicle_id}")
+                task_id = None
                 
+                if task_mode == "装载→卸载→停车":
+                    task_id = self._create_load_unload_park_task(vehicle_id, priority)
+                    
                 elif task_mode == "装载→卸载":
-                    if self.env.loading_points and self.env.unloading_points:
-                        start_location = random.choice(self.env.loading_points)
-                        end_location = random.choice(self.env.unloading_points)
-                        
-                        task_id = self.vehicle_scheduler.create_transport_task(
-                            start_location=start_location,
-                            end_location=end_location,
-                            priority=priority,
-                            vehicle_id=vehicle_id
-                        )
-                        if task_id:
-                            created_count += 1
-                            created_task_ids.append(task_id)
+                    task_id = self._create_load_unload_task(vehicle_id, priority)
+                    
+                elif task_mode == "随机循环":
+                    # 处理随机循环任务
+                    task_id = self._create_random_cycle_task(vehicle_id, priority)
+                    
+                elif task_mode == "只装载":
+                    task_id = self._create_loading_only_task(vehicle_id, priority)
+                    
+                elif task_mode == "只卸载":
+                    task_id = self._create_unloading_only_task(vehicle_id, priority)
+                
+                if task_id:
+                    created_count += 1
+                    created_task_ids.append(task_id)
+                    print(f"✅ 创建任务 {task_id} 给车辆 {vehicle_id} ({task_mode})")
             
             print(f"\n📊 批量任务创建总结:")
             print(f"   成功创建: {created_count} 个任务")
+            print(f"   任务模式: {task_mode}")
             print(f"   任务ID列表: {created_task_ids}")
             
             QMessageBox.information(self, "批量任务创建", 
-                f"成功创建 {created_count} 个任务\n"
+                f"成功创建 {created_count} 个 {task_mode} 任务\n"
                 f"任务ID: {', '.join(created_task_ids[:3])}{'...' if len(created_task_ids) > 3 else ''}")
             
         except Exception as e:
             print(f"❌ 批量任务创建失败: {e}")
             QMessageBox.critical(self, "错误", f"批量任务创建失败: {str(e)}")
+
+
+
+    def _create_random_cycle_task(self, vehicle_id: str, priority) -> Optional[str]:
+        """创建随机循环任务"""
+        try:
+            print(f"   🔄 创建随机循环任务给车辆 {vehicle_id}")
+            
+            # 获取车辆当前位置作为起点
+            vehicle_info = self.env.vehicles.get(vehicle_id)
+            if not vehicle_info:
+                print(f"   ❌ 找不到车辆信息: {vehicle_id}")
+                return None
+            
+            if hasattr(vehicle_info, 'position'):
+                start_position = vehicle_info.position
+            else:
+                start_position = vehicle_info.get('position', (0, 0, 0))
+            
+            # 确保位置是3D坐标
+            if len(start_position) < 3:
+                start_position = (*start_position, 0.0)
+            
+            print(f"     起点位置: ({start_position[0]:.1f}, {start_position[1]:.1f})")
+            
+            # 随机选择装载点
+            if not self.env.loading_points:
+                print(f"   ❌ 没有可用的装载点")
+                return None
+            
+            import random
+            loading_point = random.choice(self.env.loading_points)
+            loading_location = self._ensure_3d_point(loading_point)
+            print(f"     随机装载点: ({loading_location[0]:.1f}, {loading_location[1]:.1f})")
+            
+            # 随机选择卸载点
+            if not self.env.unloading_points:
+                print(f"   ❌ 没有可用的卸载点")
+                return None
+            
+            unloading_point = random.choice(self.env.unloading_points)
+            unloading_location = self._ensure_3d_point(unloading_point)
+            print(f"     随机卸载点: ({unloading_location[0]:.1f}, {unloading_location[1]:.1f})")
+            
+            # 随机选择停车点
+            parking_areas = getattr(self.env, 'parking_areas', [])
+            if not parking_areas:
+                # 如果没有专门的停车区，使用装载点附近作为停车点
+                parking_location = self._generate_parking_near_loading(loading_location)
+                print(f"     生成停车点: ({parking_location[0]:.1f}, {parking_location[1]:.1f})")
+            else:
+                parking_point = random.choice(parking_areas)
+                parking_location = self._ensure_3d_point(parking_point)
+                print(f"     随机停车点: ({parking_location[0]:.1f}, {parking_location[1]:.1f})")
+            
+            # 使用调度器创建4阶段循环任务
+            if hasattr(self.vehicle_scheduler, 'create_random_cycle_task'):
+                task_id = self.vehicle_scheduler.create_random_cycle_task(
+                    vehicle_id=vehicle_id,
+                    start_location=start_position,
+                    loading_location=loading_location,
+                    unloading_location=unloading_location,
+                    parking_location=parking_location,
+                    priority=priority,
+                    enable_cycle=True  # 启用循环
+                )
+            else:
+                # 如果调度器没有随机循环方法，使用传统方法创建多阶段任务
+                print(f"   ⚠️ 调度器不支持随机循环，使用传统多阶段任务")
+                task_id = self.vehicle_scheduler.create_transport_task_integrated(
+                    start_location=loading_location,
+                    end_location=parking_location,
+                    priority=priority,
+                    vehicle_id=vehicle_id
+                )
+            
+            if task_id:
+                print(f"     ✅ 随机循环任务创建成功: {task_id}")
+                return task_id
+            else:
+                print(f"     ❌ 随机循环任务创建失败")
+                return None
+                
+        except Exception as e:
+            print(f"   ❌ 创建随机循环任务异常: {e}")
+            return None
+
+    def _create_load_unload_park_task(self, vehicle_id: str, priority) -> Optional[str]:
+        """创建装载→卸载→停车任务"""
+        try:
+            if self.env.loading_points and self.env.unloading_points:
+                import random
+                start_location = random.choice(self.env.loading_points)
+                end_location = random.choice(self.env.unloading_points)
+                
+                task_id = self.vehicle_scheduler.create_transport_task_integrated(
+                    start_location=start_location,
+                    end_location=end_location,
+                    priority=priority,
+                    vehicle_id=vehicle_id
+                )
+                return task_id
+        except Exception as e:
+            print(f"   ❌ 创建装载→卸载→停车任务失败: {e}")
+        return None
+
+    def _create_load_unload_task(self, vehicle_id: str, priority) -> Optional[str]:
+        """创建装载→卸载任务"""
+        try:
+            if self.env.loading_points and self.env.unloading_points:
+                import random
+                start_location = random.choice(self.env.loading_points)
+                end_location = random.choice(self.env.unloading_points)
+                
+                # 使用现有的任务创建方法
+                task_id = self.vehicle_scheduler.create_transport_task(
+                    start_location=start_location,
+                    end_location=end_location,
+                    priority=priority,
+                    vehicle_id=vehicle_id
+                )
+                return task_id
+        except Exception as e:
+            print(f"   ❌ 创建装载→卸载任务失败: {e}")
+        return None
+
+    def _create_loading_only_task(self, vehicle_id: str, priority) -> Optional[str]:
+        """创建只装载任务"""
+        try:
+            if self.env.loading_points:
+                import random
+                # 获取车辆当前位置
+                vehicle_info = self.env.vehicles.get(vehicle_id)
+                if vehicle_info:
+                    if hasattr(vehicle_info, 'position'):
+                        start_pos = vehicle_info.position
+                    else:
+                        start_pos = vehicle_info.get('position', (0, 0, 0))
+                else:
+                    start_pos = (0, 0, 0)
+                
+                loading_location = random.choice(self.env.loading_points)
+                
+                # 使用现有方法创建简单任务
+                task_id = self.vehicle_scheduler.create_transport_task(
+                    start_location=start_pos,
+                    end_location=loading_location,
+                    priority=priority,
+                    vehicle_id=vehicle_id
+                )
+                return task_id
+        except Exception as e:
+            print(f"   ❌ 创建只装载任务失败: {e}")
+        return None
+
+    def _create_unloading_only_task(self, vehicle_id: str, priority) -> Optional[str]:
+        """创建只卸载任务"""
+        try:
+            if self.env.unloading_points:
+                import random
+                # 获取车辆当前位置
+                vehicle_info = self.env.vehicles.get(vehicle_id)
+                if vehicle_info:
+                    if hasattr(vehicle_info, 'position'):
+                        start_pos = vehicle_info.position
+                    else:
+                        start_pos = vehicle_info.get('position', (0, 0, 0))
+                else:
+                    start_pos = (0, 0, 0)
+                
+                unloading_location = random.choice(self.env.unloading_points)
+                
+                # 使用现有方法创建简单任务
+                task_id = self.vehicle_scheduler.create_transport_task(
+                    start_location=start_pos,
+                    end_location=unloading_location,
+                    priority=priority,
+                    vehicle_id=vehicle_id
+                )
+                return task_id
+        except Exception as e:
+            print(f"   ❌ 创建只卸载任务失败: {e}")
+        return None
+
+    def _ensure_3d_point(self, point) -> Tuple[float, float, float]:
+        """确保点坐标为3D"""
+        if not point:
+            return (0.0, 0.0, 0.0)
+        elif len(point) >= 3:
+            return (float(point[0]), float(point[1]), float(point[2]))
+        elif len(point) == 2:
+            return (float(point[0]), float(point[1]), 0.0)
+        else:
+            return (0.0, 0.0, 0.0)
+
+    def _generate_parking_near_loading(self, loading_location: Tuple) -> Tuple[float, float, float]:
+        """在装载点附近生成停车位置"""
+        import random
+        x, y, z = loading_location
+        # 在装载点附近10-20米范围内生成随机停车位
+        offset_x = random.uniform(-20, 20)
+        offset_y = random.uniform(-20, 20)
+        return (x + offset_x, y + offset_y, z)
     
     def assign_all_batch_tasks(self):
         """分配所有批量任务"""

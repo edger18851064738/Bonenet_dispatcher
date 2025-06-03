@@ -1,6 +1,6 @@
 """
 optimized_backbone_network.py - 完整优化整合版骨干路径网络
-整合安全矩形冲突检测、路径稳定性管理、智能接口选择等全部增强功能
+整合安全矩形冲突检测、路径稳定性管理、智能接口选择、改进网络整理等全部增强功能
 保持接口兼容性的同时提供全面的功能升级
 """
 
@@ -10,6 +10,14 @@ from collections import defaultdict, OrderedDict
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 import threading
+
+# 改进的整理功能导入
+try:
+    from improved_backbone_network_consolidation import improved_consolidate_backbone_network, ImprovedBackboneNetworkConsolidator
+    IMPROVED_CONSOLIDATION_AVAILABLE = True
+except ImportError:
+    IMPROVED_CONSOLIDATION_AVAILABLE = False
+    print("⚠️ 改进整理功能不可用，请确保 improved_backbone_network_consolidation.py 在同目录下")
 
 @dataclass
 class BiDirectionalPath:
@@ -202,48 +210,22 @@ class SafeInterfaceManager:
         self.vehicle_safety_params = {}  # {vehicle_id: safety_params}
         self.interface_safety_cache = {}  # {interface_id: safety_info}
         self.min_safety_distance = 8.0
-
-    def fix_safety_params(safety_params):
-        """修复安全参数类型问题"""
+    
+    def register_vehicle_safety_params(self, vehicle_id: str, safety_params: Dict):
+        """注册车辆安全参数"""
+        # 修复安全参数类型问题
         if hasattr(safety_params, 'to_dict'):
-            # 如果是VehicleSafetyParams对象，转换为字典
-            return safety_params.to_dict()
-        elif isinstance(safety_params, dict):
-            # 如果已经是字典，直接返回
-            return safety_params
-        else:
-            # 其他情况返回默认字典
-            return {
+            safety_params = safety_params.to_dict()
+        elif not isinstance(safety_params, dict):
+            safety_params = {
                 'length': 6.0,
                 'width': 3.0,
                 'safety_margin': 1.5,
                 'turning_radius': 8.0
             }
-
-
-   
-    def register_vehicle_safety_params(self, vehicle_id: str, safety_params: Dict):
-        """注册车辆安全参数"""
+        
         # 验证参数完整性
         required_params = ['length', 'width', 'safety_margin']
-            # 在使用前调用修复函数
-        def fix_safety_params(safety_params):
-            """修复安全参数类型问题"""
-            if hasattr(safety_params, 'to_dict'):
-                # 如果是VehicleSafetyParams对象，转换为字典
-                return safety_params.to_dict()
-            elif isinstance(safety_params, dict):
-                # 如果已经是字典，直接返回
-                return safety_params
-            else:
-                # 其他情况返回默认字典
-                return {
-                    'length': 6.0,
-                    'width': 3.0,
-                    'safety_margin': 1.5,
-                    'turning_radius': 8.0
-                }
-        safety_params = fix_safety_params(safety_params)
         for param in required_params:
             if param not in safety_params:
                 safety_params[param] = {'length': 6.0, 'width': 3.0, 'safety_margin': 1.5}[param]
@@ -397,7 +379,7 @@ class InterfaceReservationManager:
                 return 1.0  # 低使用或未使用的接口
 
 class OptimizedBackboneNetwork:
-    """完整优化整合版骨干路径网络"""
+    """完整优化整合版骨干路径网络 - 包含改进智能整理功能"""
     
     def __init__(self, env):
         self.env = env
@@ -411,7 +393,7 @@ class OptimizedBackboneNetwork:
         self.backbone_interfaces = {}
         self.path_interfaces = defaultdict(list)
         
-        # 新增：增强管理器
+        # 增强管理器
         self.stability_manager = PathStabilityManager()
         self.safe_interface_manager = SafeInterfaceManager(env)
         self.interface_manager = InterfaceReservationManager()
@@ -434,11 +416,29 @@ class OptimizedBackboneNetwork:
             'load_balancing_weight': 0.3,
             'path_switching_threshold': 0.8,
             'interface_reservation_duration': 60.0,
-            # 新增：安全相关配置
+            # 安全相关配置
             'enable_safety_optimization': True,
             'min_safety_clearance': 8.0,
             'enable_stability_management': True
         }
+        
+        # ==================== 改进整理相关配置 ====================
+        self.consolidation_config = {
+            'auto_consolidate': True,                # 生成后自动整理
+            'node_overlap_threshold': 0.8,          # 节点重叠阈值(米) - 保守
+            'path_similarity_threshold': 0.92,      # 路径相似度阈值 - 严格
+            'min_paths_for_consolidation': 8,       # 最少路径数才进行整理
+            'max_merge_ratio': 0.4,                 # 最大合并比例
+            'preserve_connectivity': True,          # 保持连通性
+            'enable_quality_validation': True,      # 启用质量验证
+            'enable_consolidation_report': True,    # 启用整理报告
+            'preserve_original': True,              # 保留原始数据
+        }
+        
+        # 整理相关状态
+        self.consolidator = None
+        self.is_consolidated = False
+        self._original_bidirectional_paths = {}  # 原始路径备份
         
         # 统计信息
         self.stats = {
@@ -454,23 +454,28 @@ class OptimizedBackboneNetwork:
             'load_balancing_decisions': 0,
             'path_switches': 0,
             'interface_reservations': 0,
-            # 新增：安全和稳定性统计
+            # 安全和稳定性统计
             'safety_optimizations': 0,
-            'stability_interventions': 0
+            'stability_interventions': 0,
+            # 改进整理统计
+            'consolidation_performed': False,
+            'original_path_count': 0,
+            'consolidated_path_count': 0,
+            'consolidation_time': 0
         }
         
-        print("初始化完整优化骨干路径网络（安全矩形+稳定性+智能选择）")
+        print("初始化完整优化骨干路径网络（包含安全矩形+稳定性+智能选择+改进网络整理）")
     
     def set_path_planner(self, path_planner):
         """设置路径规划器"""
         self.path_planner = path_planner
         print("已设置路径规划器")
     
-    # ==================== 核心接口方法（保持兼容性） ====================
+    # ==================== 核心接口方法（增强版） ====================
     
     def generate_backbone_network(self, quality_threshold: float = None) -> bool:
         """
-        生成骨干网络 - 保持原有接口，内部集成所有优化
+        生成骨干网络 - 包含改进自动整理功能
         """
         start_time = time.time()
         print("开始生成完整优化骨干路径网络...")
@@ -505,13 +510,14 @@ class OptimizedBackboneNetwork:
             generation_time = time.time() - start_time
             self.stats.update({
                 'successful_paths': len(self.bidirectional_paths),
-                'generation_time': generation_time
+                'generation_time': generation_time,
+                'original_path_count': len(self.bidirectional_paths)
             })
             
             # 成功率计算
             success_rate = success_count / max(1, self.stats['total_path_pairs'])
             
-            print(f"\n🎉 完整骨干网络生成完成!")
+            print(f"\n🎉 初始骨干网络生成完成!")
             print(f"  双向路径: {len(self.bidirectional_paths)} 条")
             print(f"  成功率: {success_rate:.1%}")
             print(f"  路径组合分布:")
@@ -520,6 +526,30 @@ class OptimizedBackboneNetwork:
             print(f"    卸载点↔停车场: {self.stats['unloading_to_parking']} 条")
             print(f"  安全接口数量: {total_interfaces} 个")
             print(f"  生成耗时: {generation_time:.2f}s")
+            
+            # ==================== 改进的自动整理功能 ====================
+            if (IMPROVED_CONSOLIDATION_AVAILABLE and 
+                self.consolidation_config['auto_consolidate'] and 
+                len(self.bidirectional_paths) >= self.consolidation_config['min_paths_for_consolidation']):
+                
+                print(f"\n🔧 开始改进的自动整理骨干网络...")
+                consolidation_success = self.consolidate_network_improved(
+                    apply_immediately=True,
+                    report=self.consolidation_config['enable_consolidation_report']
+                )
+                
+                if consolidation_success:
+                    consolidation_rate = (self.stats['original_path_count'] - 
+                                        self.stats['consolidated_path_count']) / self.stats['original_path_count']
+                    print(f"✅ 改进骨干网络整理完成!")
+                    print(f"  最终路径数: {len(self.bidirectional_paths)} 条")
+                    print(f"  整理压缩率: {consolidation_rate:.1%}")
+                else:
+                    print(f"⚠️ 改进骨干网络整理失败，使用原始网络")
+            elif not IMPROVED_CONSOLIDATION_AVAILABLE:
+                print(f"\n⚠️ 改进整理功能不可用，跳过自动整理")
+            else:
+                print(f"\n💡 自动整理已禁用或路径数不足({len(self.bidirectional_paths)}<{self.consolidation_config['min_paths_for_consolidation']})")
             
             return True
         
@@ -623,8 +653,233 @@ class OptimizedBackboneNetwork:
             for interface_id in self.backbone_interfaces:
                 self.interface_manager.release_interface(interface_id, vehicle_id)
     
+    # ==================== 改进的整理功能接口 ====================
+    
+    def consolidate_network_improved(self, apply_immediately=True, report=True) -> bool:
+        """
+        改进的骨干网络整理 - 保守且智能
+        
+        Args:
+            apply_immediately: 是否立即应用整理结果
+            report: 是否显示整理报告
+        
+        Returns:
+            bool: 整理是否成功
+        """
+        if not IMPROVED_CONSOLIDATION_AVAILABLE:
+            print("❌ 改进整理功能不可用")
+            return False
+        
+        try:
+            if len(self.bidirectional_paths) == 0:
+                print("❌ 没有路径可整理，请先生成骨干网络")
+                return False
+            
+            print(f"\n🔧 开始改进的骨干网络整理...")
+            consolidation_start = time.time()
+            
+            # 备份原始路径
+            if self.consolidation_config['preserve_original']:
+                self._original_bidirectional_paths = self.bidirectional_paths.copy()
+            
+            # 配置改进整理器
+            config = {
+                'node_overlap_threshold': self.consolidation_config['node_overlap_threshold'],
+                'path_similarity_threshold': self.consolidation_config['path_similarity_threshold'],
+                'max_merge_ratio': self.consolidation_config['max_merge_ratio'],
+                'preserve_connectivity': self.consolidation_config['preserve_connectivity'],
+                'enable_quality_validation': self.consolidation_config['enable_quality_validation']
+            }
+            
+            # 执行改进整理
+            self.consolidator = ImprovedBackboneNetworkConsolidator(config)
+            consolidation_results = self.consolidator.consolidate_backbone_network(self)
+            
+            if apply_immediately:
+                success = self.consolidator.apply_consolidation_to_backbone_network(self)
+                if success:
+                    self.is_consolidated = True
+                    
+                    # 更新统计
+                    consolidation_time = time.time() - consolidation_start
+                    self.stats.update({
+                        'consolidation_performed': True,
+                        'consolidated_path_count': len(self.bidirectional_paths),
+                        'consolidation_time': consolidation_time
+                    })
+                else:
+                    return False
+            
+            # 显示整理报告
+            if report and self.consolidator:
+                consolidation_report = self.consolidator.get_consolidation_report()
+                self._print_improved_consolidation_report(consolidation_report)
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ 改进网络整理失败: {e}")
+            return False
+    
+    def restore_original_network(self) -> bool:
+        """恢复原始网络"""
+        try:
+            if not self.consolidation_config['preserve_original']:
+                print("❌ 原始网络未保留，无法恢复")
+                return False
+            
+            if not self._original_bidirectional_paths:
+                print("❌ 没有找到原始网络备份")
+                return False
+            
+            # 恢复原始路径
+            self.bidirectional_paths = self._original_bidirectional_paths.copy()
+            self.is_consolidated = False
+            
+            # 重建索引
+            self._build_connection_index()
+            
+            # 更新统计
+            self.stats.update({
+                'consolidation_performed': False,
+                'consolidated_path_count': 0
+            })
+            
+            print("✅ 已恢复到原始骨干网络")
+            return True
+            
+        except Exception as e:
+            print(f"❌ 恢复原始网络失败: {e}")
+            return False
+    
+    def get_improved_consolidation_info(self) -> Dict:
+        """获取改进的整理信息"""
+        base_info = {
+            'is_consolidated': self.is_consolidated,
+            'improved_consolidation_available': IMPROVED_CONSOLIDATION_AVAILABLE,
+            'consolidation_config': self.consolidation_config.copy()
+        }
+        
+        if hasattr(self, 'consolidation_info'):
+            base_info.update(self.consolidation_info)
+        
+        if hasattr(self, 'consolidator') and self.consolidator:
+            base_info.update({
+                'consolidator_available': True,
+                'consolidation_report': self.consolidator.get_consolidation_report()
+            })
+        
+        return base_info
+    
+    def set_consolidation_config(self, **kwargs):
+        """设置整理配置"""
+        self.consolidation_config.update(kwargs)
+        print(f"整理配置已更新: {kwargs}")
+    
+    # 兼容性方法 - 保持原有接口
+    def consolidate_network(self, level='moderate', apply_immediately=True, 
+                          report=True, config=None) -> bool:
+        """
+        兼容性整理方法 - 自动使用改进版本
+        """
+        print("🔄 使用改进的整理系统...")
+        
+        # 根据level参数调整配置
+        if level == 'light':
+            self.consolidation_config.update({
+                'node_overlap_threshold': 0.5,
+                'path_similarity_threshold': 0.95,
+                'max_merge_ratio': 0.2
+            })
+        elif level == 'moderate':
+            self.consolidation_config.update({
+                'node_overlap_threshold': 0.8,
+                'path_similarity_threshold': 0.92,
+                'max_merge_ratio': 0.4
+            })
+        elif level == 'aggressive':
+            self.consolidation_config.update({
+                'node_overlap_threshold': 1.2,
+                'path_similarity_threshold': 0.88,
+                'max_merge_ratio': 0.6
+            })
+        
+        return self.consolidate_network_improved(apply_immediately, report)
+    
+    def _print_improved_consolidation_report(self, report: Dict):
+        """打印改进的整理报告"""
+        print(f"\n📊 改进骨干网络整理报告")
+        print(f"{'='*60}")
+        
+        summary = report.get('summary', {})
+        print(f"路径数量: {summary.get('original_path_count', 0)} -> {summary.get('final_path_count', 0)}")
+        print(f"合并路径: {summary.get('paths_merged', 0)} 条")
+        print(f"保留路径: {summary.get('paths_preserved', 0)} 条")
+        print(f"整理率: {summary.get('reduction_ratio', 0):.1%}")
+        
+        quality_impact = report.get('quality_impact', {})
+        if quality_impact:
+            print(f"\n🎯 质量影响:")
+            print(f"  质量保持: {'是' if quality_impact.get('quality_preserved', False) else '否'}")
+            print(f"  质量变化: {quality_impact.get('quality_change_percentage', 'N/A')}")
+            print(f"  最终平均质量: {quality_impact.get('final_avg_quality', 'N/A')}")
+        
+        efficiency = report.get('efficiency_gains', {})
+        if efficiency:
+            print(f"\n📈 效率提升:")
+            print(f"  路径减少: {efficiency.get('path_reduction', 'N/A')}")
+            print(f"  节点减少: {efficiency.get('node_reduction', 'N/A')}")
+        
+        recommendations = report.get('recommendations', [])
+        if recommendations:
+            print(f"\n💡 整理评估:")
+            for i, rec in enumerate(recommendations, 1):
+                print(f"  {i}. {rec}")
+        
+        print(f"{'='*60}")
+    
+    # ==================== 车辆相关增强接口 ====================
+    
+    def force_vehicle_path_switch(self, vehicle_id: str, current_position: Tuple,
+                                target_type: str, target_id: int) -> Optional[Tuple]:
+        """强制车辆路径切换 - 新增方法"""
+        print(f"强制路径切换: 车辆 {vehicle_id}")
+        
+        # 使用强制模式进行路径查找
+        if self.config['enable_stability_management']:
+            # 临时允许切换
+            original_can_switch = self.stability_manager.can_vehicle_switch(vehicle_id, force_switch=True)
+        
+        result = self.get_path_from_position_to_target(current_position, target_type, target_id, vehicle_id)
+        
+        if result and vehicle_id:
+            # 记录强制切换
+            self.stats['stability_interventions'] += 1
+            print(f"  强制切换成功")
+        
+        return result
+    
+    def register_vehicle_safety_params(self, vehicle_id: str, safety_params: Dict):
+        """注册车辆安全参数 - 新增方法"""
+        if self.config['enable_safety_optimization']:
+            self.safe_interface_manager.register_vehicle_safety_params(vehicle_id, safety_params)
+    
+    def get_vehicle_stability_report(self, vehicle_id: str) -> Dict:
+        """获取车辆稳定性报告 - 新增方法"""
+        if not self.config['enable_stability_management']:
+            return {}
+        
+        return {
+            'stability_score': self.stability_manager.get_vehicle_stability_score(vehicle_id),
+            'switch_count': self.stability_manager.vehicle_commitments.get(vehicle_id, {}).get('switch_count', 0),
+            'can_switch': self.stability_manager.can_vehicle_switch(vehicle_id),
+            'current_path_id': self.vehicle_path_assignments.get(vehicle_id)
+        }
+    
+    # ==================== 增强的网络状态接口 ====================
+    
     def get_network_status(self) -> Dict:
-        """获取网络状态 - 保持原有接口，增加新信息"""
+        """获取网络状态 - 增强版，包含改进整理信息"""
         base_status = {
             'bidirectional_paths': len(self.bidirectional_paths),
             'total_interfaces': len(self.backbone_interfaces),
@@ -646,7 +901,20 @@ class OptimizedBackboneNetwork:
             }
         }
         
-        # 新增：稳定性和安全信息
+        # 改进的整理状态信息
+        base_status['improved_consolidation_status'] = self.get_improved_consolidation_info()
+        
+        # 网络层次信息
+        if self.is_consolidated and hasattr(self, 'consolidation_info'):
+            hierarchy_info = self.consolidation_info.get('hierarchy_info', {})
+            base_status['network_hierarchy'] = {
+                'trunk_count': len(hierarchy_info.get('trunks', {})),
+                'branch_count': len(hierarchy_info.get('branches', {})),
+                'connector_count': len(hierarchy_info.get('connectors', {})),
+                'total_relationships': len(hierarchy_info.get('relationships', []))
+            }
+        
+        # 稳定性和安全信息
         if self.config['enable_stability_management']:
             base_status['stability'] = self.stability_manager.get_stability_report()
         
@@ -658,45 +926,137 @@ class OptimizedBackboneNetwork:
         
         return base_status
     
-    # ==================== 新增扩展方法（不破坏兼容性） ====================
+    # ==================== 可视化增强 ====================
     
-    def register_vehicle_safety_params(self, vehicle_id: str, safety_params: Dict):
-        """注册车辆安全参数 - 新增方法"""
-        if self.config['enable_safety_optimization']:
-            self.safe_interface_manager.register_vehicle_safety_params(vehicle_id, safety_params)
+    def visualize_network(self, save_path=None, show_hierarchy=True):
+        """可视化网络 - 支持层次结构显示"""
+        if self.is_consolidated and self.consolidator and show_hierarchy:
+            # 使用整理器的可视化功能
+            print("使用改进分层网络可视化...")
+            try:
+                self.consolidator.visualize_consolidation_results(save_path)
+            except:
+                print("整理器可视化不可用，使用原始可视化")
+                self._visualize_original_network(save_path)
+        else:
+            # 使用原有可视化方法
+            print("使用原始网络可视化...")
+            self._visualize_original_network(save_path)
     
-    def get_vehicle_stability_report(self, vehicle_id: str) -> Dict:
-        """获取车辆稳定性报告 - 新增方法"""
-        if not self.config['enable_stability_management']:
-            return {}
+    def _visualize_original_network(self, save_path=None):
+        """原始网络可视化"""
+        try:
+            import matplotlib.pyplot as plt
+            
+            plt.figure(figsize=(14, 10))
+            
+            # 绘制所有路径
+            for path_id, path_data in self.bidirectional_paths.items():
+                path = path_data.forward_path
+                x_coords = [p[0] for p in path]
+                y_coords = [p[1] for p in path]
+                
+                # 根据路径质量设置颜色和线宽
+                quality = path_data.get_average_quality()
+                alpha = 0.4 + quality * 0.4  # 质量越高越不透明
+                linewidth = 1 + quality * 2   # 质量越高线越粗
+                
+                # 如果是整理后的路径，用不同颜色
+                color = 'red' if hasattr(path_data, 'path_type') and path_data.path_type == 'merged' else 'blue'
+                
+                plt.plot(x_coords, y_coords, color=color, alpha=alpha, linewidth=linewidth)
+            
+            # 标记特殊点
+            for point in self.special_points['loading']:
+                plt.plot(point['position'][0], point['position'][1], 'go', markersize=10, label='装载点')
+            
+            for point in self.special_points['unloading']:
+                plt.plot(point['position'][0], point['position'][1], 'ro', markersize=10, label='卸载点')
+            
+            for point in self.special_points['parking']:
+                plt.plot(point['position'][0], point['position'][1], 'bo', markersize=8, label='停车区')
+            
+            # 标记接口节点
+            interface_x = []
+            interface_y = []
+            for interface_id, interface_info in self.backbone_interfaces.items():
+                pos = interface_info['position']
+                interface_x.append(pos[0])
+                interface_y.append(pos[1])
+            
+            if interface_x:
+                plt.scatter(interface_x, interface_y, c='orange', s=20, alpha=0.6, label='接口节点')
+            
+            title = f'骨干路径网络 ({len(self.bidirectional_paths)} 条路径'
+            if self.is_consolidated:
+                title += f', 已整理'
+            title += ')'
+            
+            plt.title(title)
+            plt.xlabel('X 坐标')
+            plt.ylabel('Y 坐标')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.axis('equal')
+            
+            if save_path:
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                print(f"网络可视化已保存到: {save_path}")
+            
+            plt.show()
+            
+        except ImportError:
+            print("matplotlib未安装，无法进行可视化")
+        except Exception as e:
+            print(f"可视化失败: {e}")
+    
+    # ==================== 调试和报告 ====================
+    
+    def debug_network_info(self):
+        """调试网络信息"""
+        print("=== 完整优化骨干网络调试信息 ===")
+        print(f"双向路径数量: {len(self.bidirectional_paths)}")
+        print(f"活跃车辆分配: {len(self.vehicle_path_assignments)}")
+        print(f"接口预留: {len(self.interface_manager.reservations)}")
+        print(f"平均路径利用率: {self._calculate_average_path_utilization():.2%}")
+        print(f"是否已整理: {self.is_consolidated}")
         
-        return {
-            'stability_score': self.stability_manager.get_vehicle_stability_score(vehicle_id),
-            'switch_count': self.stability_manager.vehicle_commitments.get(vehicle_id, {}).get('switch_count', 0),
-            'can_switch': self.stability_manager.can_vehicle_switch(vehicle_id),
-            'current_path_id': self.vehicle_path_assignments.get(vehicle_id)
-        }
-    
-    def force_vehicle_path_switch(self, vehicle_id: str, current_position: Tuple,
-                                target_type: str, target_id: int) -> Optional[Tuple]:
-        """强制车辆路径切换 - 新增方法"""
-        print(f"强制路径切换: 车辆 {vehicle_id}")
-        
-        # 使用强制模式进行路径查找
         if self.config['enable_stability_management']:
-            # 临时允许切换
-            original_can_switch = self.stability_manager.can_vehicle_switch(vehicle_id, force_switch=True)
+            stability_report = self.stability_manager.get_stability_report()
+            print(f"系统稳定性: {stability_report['overall_stability']:.2%}")
         
-        result = self.get_path_from_position_to_target(current_position, target_type, target_id, vehicle_id)
+        if self.config['enable_safety_optimization']:
+            print(f"已注册安全参数车辆: {len(self.safe_interface_manager.vehicle_safety_params)}")
         
-        if result and vehicle_id:
-            # 记录强制切换
-            self.stats['stability_interventions'] += 1
-            print(f"  强制切换成功")
+        # 显示高负载路径
+        high_load_paths = []
+        for path_id, path_data in self.bidirectional_paths.items():
+            load_factor = path_data.get_load_factor()
+            if load_factor > 0.5:
+                high_load_paths.append((path_id, load_factor))
         
-        return result
+        if high_load_paths:
+            print(f"\n高负载路径 ({len(high_load_paths)} 条):")
+            for path_id, load_factor in sorted(high_load_paths, key=lambda x: x[1], reverse=True):
+                print(f"  {path_id}: {load_factor:.1%} 负载")
+        
+        # 显示改进整理信息
+        if self.is_consolidated:
+            print(f"\n🔧 改进整理信息:")
+            print(f"  原始路径数: {self.stats['original_path_count']}")
+            print(f"  整理后路径数: {self.stats['consolidated_path_count']}")
+            print(f"  整理耗时: {self.stats['consolidation_time']:.2f}s")
+            print(f"  整理类型: 改进的保守整理")
+            
+            # 显示整理配置
+            config = self.consolidation_config
+            print(f"  配置 - 节点阈值: {config.get('node_overlap_threshold', 'N/A')}m")
+            print(f"  配置 - 相似度阈值: {config.get('path_similarity_threshold', 'N/A')}")
+            print(f"  配置 - 最大合并率: {config.get('max_merge_ratio', 'N/A'):.0%}")
+        else:
+            print(f"\n💡 网络未整理，使用原始生成的路径")
     
-    # ==================== 内部优化方法 ====================
+    # ==================== 内部方法（增强版本） ====================
     
     def _find_candidate_paths(self, target_type: str, target_id: int) -> List:
         """查找候选路径"""
@@ -950,7 +1310,7 @@ class OptimizedBackboneNetwork:
         
         return None
     
-    # ==================== 其他内部方法 ====================
+    # ==================== 原有其他内部方法保持不变 ====================
     
     def _load_special_points(self):
         """加载特殊点"""
@@ -1346,33 +1706,113 @@ class OptimizedBackboneNetwork:
                 interface_info['reservation_count'] = 1
             else:
                 interface_info['reservation_count'] = 0
+
+# ==================== 改进的便捷配置预设 ====================
+
+IMPROVED_CONSOLIDATION_PRESETS = {
+    'conservative': {
+        'auto_consolidate': True,
+        'node_overlap_threshold': 0.5,          # 只合并0.5米内的节点
+        'path_similarity_threshold': 0.95,      # 95%相似度才合并
+        'min_paths_for_consolidation': 10,
+        'max_merge_ratio': 0.2,                 # 最多合并20%
+        'preserve_connectivity': True,
+        'enable_quality_validation': True,
+        'enable_consolidation_report': True,
+        'preserve_original': True
+    },
+    'balanced': {
+        'auto_consolidate': True,
+        'node_overlap_threshold': 0.8,          # 合并0.8米内的节点
+        'path_similarity_threshold': 0.92,      # 92%相似度合并
+        'min_paths_for_consolidation': 8,
+        'max_merge_ratio': 0.4,                 # 最多合并40%
+        'preserve_connectivity': True,
+        'enable_quality_validation': True,
+        'enable_consolidation_report': True,
+        'preserve_original': True
+    },
+    'smart_aggressive': {
+        'auto_consolidate': True,
+        'node_overlap_threshold': 1.2,          # 合并1.2米内的节点
+        'path_similarity_threshold': 0.88,      # 88%相似度合并
+        'min_paths_for_consolidation': 6,
+        'max_merge_ratio': 0.6,                 # 最多合并60%
+        'preserve_connectivity': True,
+        'enable_quality_validation': True,
+        'enable_consolidation_report': True,
+        'preserve_original': True
+    },
+    'manual_only': {
+        'auto_consolidate': False,
+        'preserve_connectivity': True,
+        'enable_quality_validation': True,
+        'enable_consolidation_report': True,
+        'preserve_original': True
+    }
+}
+
+def apply_improved_consolidation_preset(backbone_network, preset_name='balanced'):
+    """应用改进的整理预设配置"""
+    if preset_name in IMPROVED_CONSOLIDATION_PRESETS:
+        backbone_network.set_consolidation_config(**IMPROVED_CONSOLIDATION_PRESETS[preset_name])
+        print(f"✅ 已应用改进整理预设: {preset_name}")
+        config = IMPROVED_CONSOLIDATION_PRESETS[preset_name]
+        print(f"   节点阈值: {config.get('node_overlap_threshold', 'N/A')}m")
+        print(f"   相似度阈值: {config.get('path_similarity_threshold', 'N/A')}")
+        print(f"   最大合并率: {config.get('max_merge_ratio', 'N/A'):.0%}")
+    else:
+        available = list(IMPROVED_CONSOLIDATION_PRESETS.keys())
+        print(f"❌ 未知预设: {preset_name}, 可用: {available}")
+
+def create_improved_backbone_network(env, consolidation_preset='balanced'):
+    """创建带改进整理功能的骨干网络"""
+    backbone_network = OptimizedBackboneNetwork(env)
+    apply_improved_consolidation_preset(backbone_network, consolidation_preset)
+    return backbone_network
+
+# ==================== 使用示例 ====================
+
+def demo_improved_backbone_network():
+    """改进骨干网络使用演示"""
+    print("改进骨干网络整理演示")
     
-    def debug_network_info(self):
-        """调试网络信息"""
-        print("=== 完整优化骨干网络调试信息 ===")
-        print(f"双向路径数量: {len(self.bidirectional_paths)}")
-        print(f"活跃车辆分配: {len(self.vehicle_path_assignments)}")
-        print(f"接口预留: {len(self.interface_manager.reservations)}")
-        print(f"平均路径利用率: {self._calculate_average_path_utilization():.2%}")
-        
-        if self.config['enable_stability_management']:
-            stability_report = self.stability_manager.get_stability_report()
-            print(f"系统稳定性: {stability_report['overall_stability']:.2%}")
-        
-        if self.config['enable_safety_optimization']:
-            print(f"已注册安全参数车辆: {len(self.safe_interface_manager.vehicle_safety_params)}")
-        
-        # 显示高负载路径
-        high_load_paths = []
-        for path_id, path_data in self.bidirectional_paths.items():
-            load_factor = path_data.get_load_factor()
-            if load_factor > 0.5:
-                high_load_paths.append((path_id, load_factor))
-        
-        if high_load_paths:
-            print(f"\n高负载路径 ({len(high_load_paths)} 条):")
-            for path_id, load_factor in sorted(high_load_paths, key=lambda x: x[1], reverse=True):
-                print(f"  {path_id}: {load_factor:.1%} 负载")
+    # 方法1: 使用预设创建（推荐）
+    # backbone_network = create_improved_backbone_network(env, 'balanced')
+    # backbone_network.set_path_planner(path_planner)
+    # backbone_network.generate_backbone_network()  # 自动应用改进整理
+    
+    # 方法2: 手动配置
+    # backbone_network = OptimizedBackboneNetwork(env)
+    # apply_improved_consolidation_preset(backbone_network, 'conservative')
+    # backbone_network.set_path_planner(path_planner)
+    # backbone_network.generate_backbone_network()
+    
+    # 方法3: 完全自定义
+    # backbone_network = OptimizedBackboneNetwork(env)
+    # backbone_network.set_consolidation_config(
+    #     node_overlap_threshold=0.6,
+    #     path_similarity_threshold=0.94,
+    #     max_merge_ratio=0.3
+    # )
+    # backbone_network.set_path_planner(path_planner)
+    # backbone_network.generate_backbone_network()
+    
+    # 方法4: 生成后手动整理
+    # backbone_network.generate_backbone_network()  # 先生成，不自动整理
+    # backbone_network.consolidate_network_improved(
+    #     apply_immediately=True,
+    #     report=True
+    # )
+    
+    # 获取改进整理报告
+    # improved_info = backbone_network.get_improved_consolidation_info()
+    # print("改进整理信息:", improved_info)
+    
+    pass
 
 # 向后兼容性
 SimplifiedBackboneNetwork = OptimizedBackboneNetwork
+
+if __name__ == "__main__":
+    demo_improved_backbone_network()

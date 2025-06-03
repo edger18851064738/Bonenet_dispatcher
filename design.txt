@@ -1,37 +1,1883 @@
-核心特性
-时空占用模型：
+# gui.py 中需要添加的方法和修改
 
-以路径段（相邻节点间）为基本单位记录车辆占用
-实现精确的时间窗口冲突检测
-集成先到先行 + 优先级的混合仲裁机制
+class EnhancedMineGUI(QMainWindow):
+    
+    def draw_backbone_network(self):
+        """绘制骨干网络和节点（适配整理后的网络）"""
+        if not self.backbone_network:
+            return
+        
+        scene = self.graphics_view.scene()
+        
+        # 检查是否已整理
+        is_consolidated = getattr(self.backbone_network, 'is_consolidated', False)
+        
+        if is_consolidated:
+            self._draw_consolidated_backbone_network(scene)
+        else:
+            self._draw_original_backbone_network(scene)
+    
+    def _draw_consolidated_backbone_network(self, scene):
+        """绘制整理后的骨干网络"""
+        print("🔧 绘制整理后的骨干网络...")
+        
+        for path_id, path_data in self.backbone_network.bidirectional_paths.items():
+            if not path_data.forward_path or len(path_data.forward_path) < 2:
+                continue
+            
+            # 检查路径类型
+            path_type = getattr(path_data, 'path_type', 'original')
+            merge_reason = getattr(path_data, 'merge_reason', '')
+            
+            # 根据路径类型设置不同的可视化样式
+            if path_type == 'merged':
+                color = QColor(255, 165, 0)  # 橙色 - 合并路径
+                width = 2.0
+                alpha = 0.8
+                original_count = len(getattr(path_data, 'original_paths', []))
+                print(f"   合并路径 {path_id}: 合并了 {original_count} 条原始路径")
+            elif path_type == 'original':
+                color = QColor(66, 135, 245)  # 蓝色 - 保留的原始路径
+                width = 1.5
+                alpha = 0.6
+            else:
+                color = QColor(156, 163, 175)  # 灰色 - 其他类型
+                width = 1.0
+                alpha = 0.4
+            
+            # 根据质量调整透明度
+            quality = getattr(path_data, 'quality', 0.5)
+            alpha = max(0.3, alpha * quality)
+            
+            # 创建路径
+            painter_path = QPainterPath()
+            painter_path.moveTo(path_data.forward_path[0][0], path_data.forward_path[0][1])
+            
+            for point in path_data.forward_path[1:]:
+                painter_path.lineTo(point[0], point[1])
+            
+            path_item = QGraphicsPathItem(painter_path)
+            pen = QPen(color, width)
+            pen.setCapStyle(Qt.RoundCap)
+            path_item.setPen(pen)
+            path_item.setOpacity(alpha)
+            path_item.setZValue(-25)
+            
+            # 添加路径标签（对于合并路径）
+            if path_type == 'merged':
+                # 在路径中点添加标签
+                mid_index = len(path_data.forward_path) // 2
+                mid_point = path_data.forward_path[mid_index]
+                
+                label = QGraphicsTextItem(f"M{original_count}")
+                label.setPos(mid_point[0], mid_point[1])
+                label.setDefaultTextColor(QColor(255, 165, 0))
+                label.setFont(QFont("Arial", 1.5, QFont.Bold))
+                label.setZValue(-20)
+                scene.addItem(label)
+            
+            scene.addItem(path_item)
+            
+            # 绘制整理后的接口节点（密度更高）
+            self._draw_consolidated_interface_nodes(scene, path_data)
+    
+    def _draw_consolidated_interface_nodes(self, scene, path_data):
+        """绘制整理后的接口节点"""
+        # 检查是否有整理信息
+        consolidation_info = getattr(path_data, 'consolidation_info', {})
+        
+        if consolidation_info:
+            # 使用整理后的节点信息
+            node_clusters = consolidation_info.get('node_clusters', {})
+            
+            for cluster_id, cluster_info in node_clusters.items():
+                if isinstance(cluster_info, dict):
+                    position = cluster_info.get('position', (0, 0))
+                    merged_count = cluster_info.get('merged_count', 1)
+                    
+                    # 节点大小根据合并数量调整
+                    node_size = 0.5 + (merged_count - 1) * 0.2
+                    
+                    node_circle = QGraphicsEllipseItem(
+                        position[0] - node_size, position[1] - node_size, 
+                        node_size * 2, node_size * 2
+                    )
+                    
+                    if merged_count > 1:
+                        # 合并节点用绿色
+                        node_circle.setBrush(QBrush(QColor(16, 185, 129, 200)))
+                        node_circle.setPen(QPen(QColor(16, 185, 129), 2))
+                    else:
+                        # 普通节点用白色
+                        node_circle.setBrush(QBrush(QColor(255, 255, 255, 150)))
+                        node_circle.setPen(QPen(QColor(156, 163, 175), 1))
+                    
+                    node_circle.setZValue(-20)
+                    scene.addItem(node_circle)
+                    
+                    # 添加合并数量标签
+                    if merged_count > 1:
+                        count_label = QGraphicsTextItem(str(merged_count))
+                        count_label.setPos(position[0] + 1, position[1] + 1)
+                        count_label.setDefaultTextColor(QColor(16, 185, 129))
+                        count_label.setFont(QFont("Arial", 0.8, QFont.Bold))
+                        count_label.setZValue(-15)
+                        scene.addItem(count_label)
+        else:
+            # 回退到原始接口绘制
+            self._draw_original_interface_nodes(scene, path_data)
+    
+    def _draw_original_backbone_network(self, scene):
+        """绘制原始骨干网络（保持原有逻辑）"""
+        for path_id, path_data in self.backbone_network.bidirectional_paths.items():
+            if not path_data.forward_path or len(path_data.forward_path) < 2:
+                continue
+            
+            # 获取路径负载
+            load_factor = path_data.get_load_factor()
+            
+            # 根据负载设置颜色
+            if load_factor > 0.8:
+                color = QColor(239, 68, 68)
+                width = 1.0
+            elif load_factor > 0.5:
+                color = QColor(245, 158, 11)
+                width = 1.0
+            else:
+                color = QColor(66, 135, 245)
+                width = 1.0
+            
+            # 创建路径
+            painter_path = QPainterPath()
+            painter_path.moveTo(path_data.forward_path[0][0], path_data.forward_path[0][1])
+            
+            for point in path_data.forward_path[1:]:
+                painter_path.lineTo(point[0], point[1])
+            
+            path_item = QGraphicsPathItem(painter_path)
+            pen = QPen(color, width)
+            pen.setCapStyle(Qt.RoundCap)
+            path_item.setPen(pen)
+            path_item.setZValue(-25)
+            
+            scene.addItem(path_item)
+            
+            # 绘制原始接口节点
+            self._draw_original_interface_nodes(scene, path_data)
+    
+    def _draw_original_interface_nodes(self, scene, path_data):
+        """绘制原始接口节点"""
+        interface_spacing = 8
+        color = QColor(66, 135, 245)
+        
+        for i in range(0, len(path_data.forward_path), interface_spacing):
+            if i >= len(path_data.forward_path):
+                break
+            
+            point = path_data.forward_path[i]
+            x, y = point[0], point[1]
+            
+            # 创建节点（小圆圈）
+            node_circle = QGraphicsEllipseItem(x-0.5, y-0.5, 1.0, 1.0)
+            node_circle.setBrush(QBrush(QColor(255, 255, 255, 200)))
+            node_circle.setPen(QPen(color, 1))
+            node_circle.setZValue(-20)
+            
+            scene.addItem(node_circle)
+    
+    def update_backbone_network_display(self):
+        """更新骨干网络显示（新增方法）"""
+        if not self.backbone_network:
+            return
+        
+        # 清除现有的骨干网络图形
+        scene = self.graphics_view.scene()
+        items_to_remove = []
+        
+        for item in scene.items():
+            # 移除骨干网络相关的图形项
+            if (isinstance(item, QGraphicsPathItem) or 
+                isinstance(item, QGraphicsEllipseItem) or 
+                isinstance(item, QGraphicsTextItem)):
+                if item.zValue() <= -15:  # 骨干网络层级
+                    items_to_remove.append(item)
+        
+        for item in items_to_remove:
+            scene.removeItem(item)
+        
+        # 重新绘制
+        self.draw_backbone_network()
+        
+        # 更新统计标签
+        self._update_backbone_stats_label()
+    
+    def _update_backbone_stats_label(self):
+        """更新骨干网络统计标签"""
+        if not self.backbone_network:
+            return
+        
+        path_count = len(self.backbone_network.bidirectional_paths)
+        
+        # 检查是否已整理
+        is_consolidated = getattr(self.backbone_network, 'is_consolidated', False)
+        
+        if is_consolidated:
+            # 显示整理统计
+            consolidation_info = self.backbone_network.get_improved_consolidation_info()
+            if consolidation_info and 'consolidation_report' in consolidation_info:
+                report = consolidation_info['consolidation_report']
+                summary = report.get('summary', {})
+                
+                original_count = summary.get('original_path_count', path_count)
+                reduction_ratio = summary.get('reduction_ratio', 0) * 100
+                
+                stats_text = f"路径: {path_count} 条 (整理前: {original_count}, 压缩: {reduction_ratio:.1f}%)"
+            else:
+                stats_text = f"路径: {path_count} 条 (已整理)"
+        else:
+            stats_text = f"路径: {path_count} 条"
+        
+        self.backbone_stats_label.setText(stats_text)
+    
+    def generate_backbone_network(self):
+        """生成骨干网络（修改版 - 支持整理显示）"""
+        if not self.env or not self.backbone_network:
+            QMessageBox.warning(self, "警告", "请先加载环境")
+            return
+        
+        try:
+            self.status_label.setText("正在生成骨干网络...")
+            
+            quality_threshold = self.quality_spin.value()
+            
+            success = self.backbone_network.generate_backbone_network(
+                quality_threshold=quality_threshold
+            )
+            
+            if success:
+                # 更新可视化（支持整理后的网络）
+                self.update_backbone_network_display()
+                
+                # 获取网络状态
+                network_status = self.backbone_network.get_network_status()
+                path_count = network_status['bidirectional_paths']
+                
+                # 检查是否进行了整理
+                is_consolidated = getattr(self.backbone_network, 'is_consolidated', False)
+                
+                self.status_label.setText("骨干网络生成成功")
+                
+                if is_consolidated:
+                    # 显示整理信息
+                    consolidation_info = self.backbone_network.get_improved_consolidation_info()
+                    if consolidation_info and 'consolidation_report' in consolidation_info:
+                        report = consolidation_info['consolidation_report']
+                        summary = report.get('summary', {})
+                        
+                        original_count = summary.get('original_path_count', path_count)
+                        reduction_ratio = summary.get('reduction_ratio', 0) * 100
+                        
+                        QMessageBox.information(self, "骨干网络生成成功", 
+                            f"骨干网络生成并整理完成\n"
+                            f"原始路径: {original_count} 条\n"
+                            f"整理后路径: {path_count} 条\n"
+                            f"压缩率: {reduction_ratio:.1f}%")
+                    else:
+                        QMessageBox.information(self, "成功", 
+                            f"骨干网络生成成功\n双向路径: {path_count} 条（已整理）")
+                else:
+                    QMessageBox.information(self, "成功", 
+                        f"骨干网络生成成功\n双向路径: {path_count} 条")
+            else:
+                self.status_label.setText("生成失败")
+                QMessageBox.critical(self, "错误", "骨干网络生成失败")
+                
+        except Exception as e:
+            self.status_label.setText("生成异常")
+            QMessageBox.critical(self, "错误", f"生成骨干网络失败:\n{str(e)}")
 
-三层架构：
+# vehicle_scheduler.py 中需要添加的方法和修改
 
-conflict_control.py - 路径段占用记录、冲突检测分类
-traffic_manager.py - 冲突解决策略执行、系统协调
-vehicle_scheduler.py - 任务分配、路径规划、时序计算
+class EnhancedBackboneVehicleScheduler:
+    
+    def __init__(self, env, backbone_network, path_planner, conflict_detector, traffic_manager):
+        # ... 原有初始化代码 ...
+        
+        # 新增：整理适配配置
+        self.consolidation_config = {
+            'track_path_changes': True,           # 跟踪路径变化
+            'auto_remap_tasks': True,             # 自动重映射任务
+            'handle_merged_paths': True,          # 处理合并路径
+            'preserve_task_integrity': True,      # 保持任务完整性
+            'consolidation_aware_assignment': True # 整理感知分配
+        }
+        
+        # 路径映射跟踪
+        self.path_mapping_history = {}  # {old_path_id: new_path_id}
+        self.consolidated_path_info = {}  # {path_id: consolidation_info}
+        
+        print("车辆调度器支持骨干网络整理适配")
+    
+    def handle_backbone_network_consolidation(self, consolidation_results: Dict) -> bool:
+        """处理骨干网络整理事件"""
+        print(f"\n🔧 处理骨干网络整理事件...")
+        
+        if not consolidation_results:
+            return False
+        
+        try:
+            # 获取整理信息
+            consolidated_paths = consolidation_results.get('consolidated_paths', {})
+            original_paths = consolidation_results.get('original_paths', {})
+            consolidation_stats = consolidation_results.get('consolidation_stats', {})
+            
+            print(f"   原始路径: {len(original_paths)} 条")
+            print(f"   整理后路径: {len(consolidated_paths)} 条")
+            
+            # 1. 建立路径映射关系
+            path_mapping = self._build_path_mapping(original_paths, consolidated_paths)
+            
+            # 2. 重映射活跃任务
+            remapped_tasks = self._remap_active_tasks(path_mapping)
+            
+            # 3. 更新车辆状态
+            updated_vehicles = self._update_vehicle_backbone_assignments(path_mapping)
+            
+            # 4. 更新冲突检测器记录
+            self._update_conflict_detector_records(path_mapping)
+            
+            # 5. 存储整理信息
+            self._store_consolidation_info(consolidation_results)
+            
+            print(f"   ✅ 整理适配完成:")
+            print(f"      重映射任务: {remapped_tasks} 个")
+            print(f"      更新车辆: {updated_vehicles} 个")
+            
+            return True
+            
+        except Exception as e:
+            print(f"   ❌ 整理适配失败: {e}")
+            return False
+    
+    def _build_path_mapping(self, original_paths: Dict, consolidated_paths: Dict) -> Dict[str, str]:
+        """建立路径映射关系"""
+        path_mapping = {}
+        
+        # 处理合并路径的映射
+        for new_path_id, new_path_data in consolidated_paths.items():
+            original_path_ids = getattr(new_path_data, 'original_paths', [])
+            
+            if original_path_ids:
+                # 合并路径：多个原始路径映射到一个新路径
+                for old_path_id in original_path_ids:
+                    path_mapping[old_path_id] = new_path_id
+                    print(f"      映射: {old_path_id} -> {new_path_id} (合并)")
+            else:
+                # 保留路径：路径ID保持不变
+                if new_path_id in original_paths:
+                    path_mapping[new_path_id] = new_path_id
+                    print(f"      映射: {new_path_id} -> {new_path_id} (保留)")
+        
+        # 检查遗漏的原始路径
+        for old_path_id in original_paths.keys():
+            if old_path_id not in path_mapping:
+                print(f"      ⚠️ 原始路径 {old_path_id} 未找到映射关系")
+        
+        self.path_mapping_history.update(path_mapping)
+        return path_mapping
+    
+    def _remap_active_tasks(self, path_mapping: Dict[str, str]) -> int:
+        """重映射活跃任务的骨干路径"""
+        remapped_count = 0
+        
+        for task_id, task in self.tasks.items():
+            if task.status in [TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS]:
+                old_path_id = task.assigned_backbone_path_id
+                
+                if old_path_id and old_path_id in path_mapping:
+                    new_path_id = path_mapping[old_path_id]
+                    
+                    if new_path_id != old_path_id:
+                        print(f"      重映射任务 {task_id}: {old_path_id} -> {new_path_id}")
+                        
+                        # 更新任务的骨干路径ID
+                        task.assigned_backbone_path_id = new_path_id
+                        
+                        # 检查是否需要重新规划路径
+                        if self._should_replan_task_path(task, old_path_id, new_path_id):
+                            self._replan_task_path_after_consolidation(task, new_path_id)
+                        
+                        remapped_count += 1
+        
+        return remapped_count
+    
+    def _should_replan_task_path(self, task: BackboneTask, old_path_id: str, new_path_id: str) -> bool:
+        """判断是否需要重新规划任务路径"""
+        # 如果路径发生了实质性变化（不只是ID变化），需要重新规划
+        if not self.backbone_network:
+            return False
+        
+        old_path_data = self.backbone_network.bidirectional_paths.get(new_path_id)
+        if not old_path_data:
+            return True  # 找不到新路径，需要重新规划
+        
+        # 检查路径类型
+        path_type = getattr(old_path_data, 'path_type', 'original')
+        if path_type == 'merged':
+            # 合并路径可能几何形状发生变化，需要重新规划
+            print(f"        任务 {task.task_id} 使用合并路径，需要重新规划")
+            return True
+        
+        return False
+    
+    def _replan_task_path_after_consolidation(self, task: BackboneTask, new_path_id: str):
+        """整理后重新规划任务路径"""
+        if not task.vehicle_id or task.vehicle_id not in self.vehicle_states:
+            return False
+        
+        vehicle_state = self.vehicle_states[task.vehicle_id]
+        current_stage = task.get_current_stage()
+        
+        if not current_stage:
+            return False
+        
+        try:
+            # 重新规划到当前阶段的路径
+            path_result = self._plan_backbone_path_to_stage(task, vehicle_state, current_stage)
+            
+            if path_result:
+                complete_path, structure = path_result
+                
+                # 更新任务路径信息
+                task.complete_path = complete_path
+                task.path_structure = structure
+                task.assigned_backbone_path_id = new_path_id
+                
+                # 重新计算时序计划
+                node_timing_plan = self._calculate_node_timing_plan(
+                    complete_path, structure, vehicle_state
+                )
+                task.node_timing_plan = node_timing_plan
+                
+                print(f"        ✅ 任务 {task.task_id} 路径重新规划成功")
+                return True
+            else:
+                print(f"        ❌ 任务 {task.task_id} 路径重新规划失败")
+                return False
+                
+        except Exception as e:
+            print(f"        ❌ 任务 {task.task_id} 重新规划异常: {e}")
+            return False
+    
+    def _update_vehicle_backbone_assignments(self, path_mapping: Dict[str, str]) -> int:
+        """更新车辆的骨干路径分配"""
+        updated_count = 0
+        
+        for vehicle_id, vehicle_state in self.vehicle_states.items():
+            old_path_id = vehicle_state.current_backbone_path_id
+            
+            if old_path_id and old_path_id in path_mapping:
+                new_path_id = path_mapping[old_path_id]
+                
+                if new_path_id != old_path_id:
+                    print(f"      更新车辆 {vehicle_id}: {old_path_id} -> {new_path_id}")
+                    vehicle_state.current_backbone_path_id = new_path_id
+                    updated_count += 1
+        
+        return updated_count
+    
+    def _update_conflict_detector_records(self, path_mapping: Dict[str, str]):
+        """更新冲突检测器中的路径记录"""
+        if not self.conflict_detector:
+            return
+        
+        try:
+            # 获取当前占用记录
+            current_occupations = getattr(self.conflict_detector, 'segment_occupations', {})
+            
+            # 重新映射占用记录中的路径ID
+            updated_occupations = {}
+            
+            for segment_id, occupations in current_occupations.items():
+                # 检查segment_id是否包含需要映射的路径ID
+                new_segment_id = segment_id
+                
+                for old_path_id, new_path_id in path_mapping.items():
+                    if old_path_id in segment_id and old_path_id != new_path_id:
+                        new_segment_id = segment_id.replace(old_path_id, new_path_id)
+                        break
+                
+                updated_occupations[new_segment_id] = occupations
+            
+            # 更新冲突检测器的占用记录
+            if hasattr(self.conflict_detector, 'segment_occupations'):
+                self.conflict_detector.segment_occupations = updated_occupations
+                print(f"      更新冲突检测器占用记录: {len(updated_occupations)} 个")
+                
+        except Exception as e:
+            print(f"      ⚠️ 更新冲突检测器记录失败: {e}")
+    
+    def _store_consolidation_info(self, consolidation_results: Dict):
+        """存储整理信息供后续查询"""
+        consolidated_paths = consolidation_results.get('consolidated_paths', {})
+        
+        for path_id, path_data in consolidated_paths.items():
+            consolidation_info = {
+                'path_type': getattr(path_data, 'path_type', 'original'),
+                'original_paths': getattr(path_data, 'original_paths', []),
+                'merge_reason': getattr(path_data, 'merge_reason', ''),
+                'consolidation_info': getattr(path_data, 'consolidation_info', {})
+            }
+            
+            self.consolidated_path_info[path_id] = consolidation_info
+    
+    def get_consolidation_aware_assignment_score(self, task: BackboneTask, vehicle_state: VehicleState) -> float:
+        """整理感知的任务分配评分"""
+        base_score = self._calculate_backbone_assignment_score(task, vehicle_state)
+        
+        if not self.consolidation_config['consolidation_aware_assignment']:
+            return base_score
+        
+        # 获取候选路径的整理信息
+        candidate_paths = self._find_candidate_paths_for_task(task)
+        
+        # 整理感知调整
+        consolidation_bonus = 0.0
+        
+        for path_data in candidate_paths:
+            path_id = path_data.path_id
+            
+            if path_id in self.consolidated_path_info:
+                info = self.consolidated_path_info[path_id]
+                path_type = info.get('path_type', 'original')
+                
+                if path_type == 'merged':
+                    # 合并路径有轻微惩罚（可能质量略有损失）
+                    consolidation_bonus += 5.0
+                    
+                    # 但如果是高质量合并，给予奖励
+                    consolidation_info = info.get('consolidation_info', {})
+                    quality_preserved = consolidation_info.get('quality_preserved', False)
+                    if quality_preserved:
+                        consolidation_bonus -= 3.0  # 减少惩罚
+                
+                elif path_type == 'original':
+                    # 保留的原始路径轻微奖励（质量保证）
+                    consolidation_bonus -= 2.0
+        
+        return base_score + consolidation_bonus
+    
+    def _find_candidate_paths_for_task(self, task: BackboneTask) -> List:
+        """为任务查找候选路径"""
+        candidates = []
+        
+        current_stage = task.get_current_stage()
+        if not current_stage:
+            return candidates
+        
+        target_type = current_stage.target_type
+        target_id = current_stage.target_id
+        
+        if self.backbone_network:
+            for path_id, path_data in self.backbone_network.bidirectional_paths.items():
+                if ((path_data.point_a['type'] == target_type and 
+                     path_data.point_a['id'] == target_id) or
+                    (path_data.point_b['type'] == target_type and 
+                     path_data.point_b['id'] == target_id)):
+                    candidates.append(path_data)
+        
+        return candidates
+    
+    def _assign_backbone_aware(self, task: BackboneTask) -> Optional[str]:
+        """骨干网络感知分配（整理适配版）"""
+        best_vehicle = None
+        best_score = float('inf')
+        
+        for vehicle_id, vehicle_state in self.vehicle_states.items():
+            if (vehicle_state.current_status not in [VehicleStatus.IDLE, VehicleStatus.PLANNING] or
+                len(vehicle_state.task_queue) >= self.config['max_tasks_per_vehicle']):
+                continue
+            
+            # 使用整理感知评分
+            if self.consolidation_config['consolidation_aware_assignment']:
+                score = self.get_consolidation_aware_assignment_score(task, vehicle_state)
+            else:
+                score = self._calculate_backbone_assignment_score(task, vehicle_state)
+            
+            if score < best_score:
+                best_score = score
+                best_vehicle = vehicle_id
+        
+        return best_vehicle
+    
+    def get_consolidation_status(self) -> Dict:
+        """获取整理状态信息"""
+        return {
+            'path_mapping_count': len(self.path_mapping_history),
+            'consolidated_paths_tracked': len(self.consolidated_path_info),
+            'config': self.consolidation_config.copy(),
+            'path_type_distribution': self._get_path_type_distribution(),
+            'remapped_tasks': self._count_remapped_tasks()
+        }
+    
+    def _get_path_type_distribution(self) -> Dict[str, int]:
+        """获取路径类型分布"""
+        distribution = {'original': 0, 'merged': 0, 'other': 0}
+        
+        for info in self.consolidated_path_info.values():
+            path_type = info.get('path_type', 'other')
+            if path_type in distribution:
+                distribution[path_type] += 1
+            else:
+                distribution['other'] += 1
+        
+        return distribution
+    
+    def _count_remapped_tasks(self) -> int:
+        """统计重映射的任务数量"""
+        count = 0
+        for task in self.tasks.values():
+            if task.assigned_backbone_path_id in self.path_mapping_history:
+                original_id = None
+                for old_id, new_id in self.path_mapping_history.items():
+                    if new_id == task.assigned_backbone_path_id:
+                        original_id = old_id
+                        break
+                
+                if original_id and original_id != task.assigned_backbone_path_id:
+                    count += 1
+        
+        return count
+    
+    def debug_consolidation_adaptation(self):
+        """调试整理适配状态"""
+        print("\n" + "="*60)
+        print("🔧 骨干网络整理适配调试")
+        print("="*60)
+        
+        consolidation_status = self.get_consolidation_status()
+        
+        print(f"路径映射记录: {consolidation_status['path_mapping_count']} 个")
+        print(f"跟踪的整理路径: {consolidation_status['consolidated_paths_tracked']} 个")
+        print(f"重映射的任务: {consolidation_status['remapped_tasks']} 个")
+        
+        print(f"\n路径类型分布:")
+        for path_type, count in consolidation_status['path_type_distribution'].items():
+            print(f"  {path_type}: {count} 条")
+        
+        print(f"\n配置状态:")
+        for key, value in consolidation_status['config'].items():
+            print(f"  {key}: {value}")
+        
+        print("="*60)
 
-冲突解决策略层次
+# 在 EnhancedBackboneVehicleScheduler 的 __init__ 方法中添加整理事件监听
+def setup_consolidation_listener(self):
+    """设置整理事件监听"""
+    if self.backbone_network and hasattr(self.backbone_network, 'set_consolidation_callback'):
+        self.backbone_network.set_consolidation_callback(
+            self.handle_backbone_network_consolidation
+        )
+        print("设置骨干网络整理事件监听")
 
-先到先行 - 同优先级车辆按请求时间排序
-优先级抢占 - 高优先级车辆优先通行
-时间调整 - 微调通过时间避免冲突
-备选骨干路径 - 切换到其他路径
-备选接入节点 - 同路径不同接入点
-紧急停车 - 最后手段
+# traffic_manager.py 中需要添加的方法和修改
 
-与现有系统集成
-python# 集成到现有系统
-from enhanced_conflict_control import EnhancedBackboneConflictDetector
-from enhanced_traffic_manager import EnhancedBackboneTrafficManager  
-from enhanced_vehicle_scheduler import EnhancedBackboneVehicleScheduler
+class EnhancedBackboneTrafficManager:
+    
+    def __init__(self, env, backbone_network, conflict_detector):
+        # ... 原有初始化代码 ...
+        
+        # 新增：整理适配配置
+        self.consolidation_config = {
+            'handle_merged_path_conflicts': True,    # 处理合并路径冲突
+            'adjust_conflict_severity': True,        # 调整冲突严重程度
+            'preserve_conflict_history': True,       # 保持冲突历史
+            'adaptive_resolution_strategy': True     # 自适应解决策略
+        }
+        
+        # 整理相关状态
+        self.merged_path_conflicts = {}  # 合并路径特有的冲突
+        self.consolidation_aware_strategies = {
+            'merged_path_priority': self._resolve_merged_path_priority,
+            'original_path_preference': self._resolve_original_path_preference,
+            'adaptive_temporal': self._resolve_adaptive_temporal
+        }
+        
+        print("交通管理器支持骨干网络整理适配")
+    
+    def handle_backbone_consolidation_event(self, consolidation_results: Dict):
+        """处理骨干网络整理事件"""
+        print(f"\n🚦 交通管理器处理网络整理事件...")
+        
+        try:
+            # 1. 更新冲突检测适配
+            self._update_conflict_detection_for_consolidation(consolidation_results)
+            
+            # 2. 重新评估现有冲突
+            self._reevaluate_existing_conflicts_after_consolidation()
+            
+            # 3. 更新解决策略
+            self._update_resolution_strategies_for_consolidated_network()
+            
+            # 4. 清理过期的停车记录
+            self._cleanup_stopped_vehicles_after_consolidation()
+            
+            print(f"   ✅ 交通管理器整理适配完成")
+            return True
+            
+        except Exception as e:
+            print(f"   ❌ 交通管理器整理适配失败: {e}")
+            return False
+    
+    def _update_conflict_detection_for_consolidation(self, consolidation_results: Dict):
+        """更新整理后的冲突检测"""
+        consolidated_paths = consolidation_results.get('consolidated_paths', {})
+        
+        # 识别合并路径
+        for path_id, path_data in consolidated_paths.items():
+            path_type = getattr(path_data, 'path_type', 'original')
+            
+            if path_type == 'merged':
+                original_paths = getattr(path_data, 'original_paths', [])
+                consolidation_info = getattr(path_data, 'consolidation_info', {})
+                
+                # 存储合并路径信息
+                self.merged_path_conflicts[path_id] = {
+                    'original_paths': original_paths,
+                    'merge_quality': consolidation_info.get('quality_preserved', True),
+                    'merge_type': consolidation_info.get('merge_reason', 'similarity'),
+                    'capacity_adjustment': len(original_paths)  # 容量可能需要调整
+                }
+                
+                print(f"      识别合并路径 {path_id}: 合并了 {len(original_paths)} 条原始路径")
+    
+    def _reevaluate_existing_conflicts_after_consolidation(self):
+        """重新评估整理后的现有冲突"""
+        active_conflicts = self.conflict_detector.get_active_conflicts()
+        
+        if not active_conflicts:
+            return
+        
+        print(f"   重新评估 {len(active_conflicts)} 个现有冲突...")
+        
+        for conflict in active_conflicts:
+            # 检查冲突涉及的路径是否为合并路径
+            if conflict.backbone_path_id in self.merged_path_conflicts:
+                self._adjust_conflict_for_merged_path(conflict)
+    
+    def _adjust_conflict_for_merged_path(self, conflict):
+        """调整合并路径的冲突处理"""
+        path_id = conflict.backbone_path_id
+        merge_info = self.merged_path_conflicts.get(path_id, {})
+        
+        # 调整冲突严重程度
+        if self.consolidation_config['adjust_conflict_severity']:
+            capacity_factor = merge_info.get('capacity_adjustment', 1)
+            
+            if capacity_factor > 1:
+                # 合并路径承载了多条原始路径的流量，可能需要降低严重程度
+                if conflict.severity.value < 3:  # 避免超出枚举范围
+                    # 可以考虑适当调整，但需要谨慎
+                    print(f"      合并路径 {path_id} 冲突严重程度调整（容量因子: {capacity_factor}）")
+        
+        # 调整解决策略偏好
+        merge_quality = merge_info.get('merge_quality', True)
+        if not merge_quality:
+            # 如果合并质量不高，优先考虑路径切换策略
+            conflict.suggested_resolution = ResolutionStrategy.ALTERNATIVE_BACKBONE_PATH
+            print(f"      合并路径 {path_id} 质量不高，建议路径切换策略")
+    
+    def _update_resolution_strategies_for_consolidated_network(self):
+        """更新整理后网络的解决策略"""
+        # 在原有策略基础上添加整理感知策略
+        if self.consolidation_config['adaptive_resolution_strategy']:
+            self.resolution_strategies.update(self.consolidation_aware_strategies)
+            print(f"   添加整理感知解决策略: {len(self.consolidation_aware_strategies)} 个")
+    
+    def _cleanup_stopped_vehicles_after_consolidation(self):
+        """清理整理后过期的停车记录"""
+        if not self.stopped_vehicles:
+            return
+        
+        cleaned_count = 0
+        current_time = time.time()
+        
+        # 检查停车车辆的冲突是否因路径整理而解决
+        vehicles_to_recover = []
+        
+        for vehicle_id, stop_record in list(self.stopped_vehicles.items()):
+            # 如果停车时间过长且原冲突可能已通过整理解决
+            stop_duration = current_time - stop_record.stop_time
+            
+            if stop_duration > 60.0:  # 停车超过1分钟
+                # 检查是否可以恢复
+                if not self._has_blocking_conflicts(vehicle_id):
+                    vehicles_to_recover.append(vehicle_id)
+        
+        # 恢复可以恢复的车辆
+        for vehicle_id in vehicles_to_recover:
+            if self.recover_vehicle(vehicle_id, force=False):
+                cleaned_count += 1
+                print(f"      整理后恢复停车车辆: {vehicle_id}")
+        
+        if cleaned_count > 0:
+            print(f"   ✅ 整理后恢复 {cleaned_count} 个停车车辆")
+    
+    # ==================== 整理感知的冲突解决策略 ====================
+    
+    def _resolve_merged_path_priority(self, conflict) -> bool:
+        """合并路径优先解决策略"""
+        print(f"      🔀 执行合并路径优先策略...")
+        
+        path_id = conflict.backbone_path_id
+        
+        if path_id not in self.merged_path_conflicts:
+            # 不是合并路径，使用标准策略
+            return self._resolve_priority_preemption(conflict)
+        
+        merge_info = self.merged_path_conflicts[path_id]
+        original_path_count = len(merge_info.get('original_paths', []))
+        
+        print(f"        合并路径 {path_id} 承载 {original_path_count} 条原始路径的流量")
+        
+        # 对于合并路径，优先级权重放大
+        enhanced_priority_order = []
+        
+        for vehicle_id in conflict.priority_order:
+            vehicle_priority = self.vehicle_scheduler.get_vehicle_priority(vehicle_id) if self.vehicle_scheduler else 2
+            
+            # 在合并路径上的车辆获得优先级加成
+            enhanced_priority = vehicle_priority + 1  # 加成1级优先级
+            enhanced_priority_order.append((vehicle_id, enhanced_priority))
+        
+        # 按增强优先级重新排序
+        enhanced_priority_order.sort(key=lambda x: x[1], reverse=True)
+        conflict.priority_order = [x[0] for x in enhanced_priority_order]
+        
+        print(f"        增强优先级顺序: {conflict.priority_order}")
+        
+        # 使用标准优先级抢占策略
+        return self._resolve_priority_preemption(conflict)
+    
+    def _resolve_original_path_preference(self, conflict) -> bool:
+        """原始路径偏好解决策略"""
+        print(f"      📍 执行原始路径偏好策略...")
+        
+        if not self.backbone_network:
+            return False
+        
+        # 查找涉及车辆是否有原始路径备选
+        alternative_found = False
+        
+        for vehicle_id in conflict.conflicting_vehicles:
+            target_info = self.vehicle_scheduler.get_vehicle_target_info(vehicle_id) if self.vehicle_scheduler else None
+            
+            if not target_info:
+                continue
+            
+            # 查找到达相同目标的原始路径
+            alternative_paths = self.backbone_network.find_alternative_backbone_paths(
+                target_info['target_type'], 
+                target_info['target_id'],
+                exclude_path_id=conflict.backbone_path_id
+            )
+            
+            # 优先选择原始路径
+            original_alternatives = []
+            for alt_path in alternative_paths:
+                path_type = getattr(alt_path, 'path_type', 'original')
+                if path_type == 'original':
+                    original_alternatives.append(alt_path)
+            
+            if original_alternatives:
+                # 选择负载最低的原始路径
+                best_original = min(original_alternatives, key=lambda p: p.get_load_factor())
+                
+                if best_original.get_load_factor() < 0.8:
+                    # 尝试切换到原始路径
+                    success = self.vehicle_scheduler.switch_vehicle_backbone_path(
+                        vehicle_id, best_original.path_id
+                    ) if self.vehicle_scheduler else False
+                    
+                    if success:
+                        print(f"        ✅ 车辆 {vehicle_id} 切换到原始路径 {best_original.path_id}")
+                        alternative_found = True
+                        break
+        
+        if alternative_found:
+            return True
+        else:
+            # 回退到标准策略
+            return self._resolve_temporal_adjustment(conflict)
+    
+    def _resolve_adaptive_temporal(self, conflict) -> bool:
+        """自适应时间调整策略"""
+        print(f"      ⏰ 执行自适应时间调整策略...")
+        
+        path_id = conflict.backbone_path_id
+        
+        # 基础时间调整步长
+        base_adjustment = self.config['temporal_adjustment_step']
+        
+        # 根据路径类型调整
+        if path_id in self.merged_path_conflicts:
+            merge_info = self.merged_path_conflicts[path_id]
+            capacity_factor = merge_info.get('capacity_adjustment', 1)
+            
+            # 合并路径可能承载更多流量，调整时间步长
+            adjusted_step = base_adjustment * (1 + 0.2 * (capacity_factor - 1))
+            print(f"        合并路径时间调整步长: {base_adjustment} -> {adjusted_step}")
+        else:
+            adjusted_step = base_adjustment
+        
+        # 执行自适应时间调整
+        success_count = 0
+        self._fix_priority_order(conflict)
+        
+        # 从低优先级开始调整
+        vehicles_by_priority = conflict.priority_order.copy()
+        vehicles_by_priority.reverse()
+        
+        for i, vehicle_id in enumerate(vehicles_by_priority[:-1]):
+            delay_time = adjusted_step * (i + 1)
+            
+            if delay_time > self.config['max_temporal_delay']:
+                break
+            
+            success = self.vehicle_scheduler.delay_vehicle_backbone_timing(
+                vehicle_id, conflict.backbone_path_id, delay_time
+            ) if self.vehicle_scheduler else False
+            
+            if success:
+                success_count += 1
+                print(f"        ✅ 车辆 {vehicle_id} 自适应时间调整 +{delay_time:.1f}s")
+        
+        if success_count > 0:
+            self.stats['temporal_adjustments'] += 1
+        
+        return success_count > 0
+    
+    def resolve_backbone_conflict(self, conflict) -> ResolutionResult:
+        """解决骨干路径冲突（整理适配版）"""
+        # 检查是否为合并路径冲突
+        path_id = conflict.backbone_path_id
+        is_merged_path = path_id in self.merged_path_conflicts
+        
+        if is_merged_path and self.consolidation_config['handle_merged_path_conflicts']:
+            print(f"🔀 处理合并路径冲突: {conflict.conflict_id} (路径: {path_id})")
+            
+            # 对于合并路径，优先尝试整理感知策略
+            merge_info = self.merged_path_conflicts[path_id]
+            merge_quality = merge_info.get('merge_quality', True)
+            
+            if not merge_quality:
+                # 质量不高的合并路径，优先尝试路径切换
+                conflict.suggested_resolution = ResolutionStrategy.ALTERNATIVE_BACKBONE_PATH
+                print(f"   低质量合并路径，优先尝试路径切换")
+            elif len(conflict.conflicting_vehicles) > 3:
+                # 车辆数量多，使用自适应时间调整
+                original_resolution = conflict.suggested_resolution
+                conflict.suggested_resolution = ResolutionStrategy.TEMPORAL_ADJUSTMENT
+                print(f"   多车辆合并路径冲突，使用自适应时间调整")
+        
+        # 调用原有的冲突解决逻辑
+        return super().resolve_backbone_conflict(conflict) if hasattr(super(), 'resolve_backbone_conflict') else self._original_resolve_backbone_conflict(conflict)
+    
+    def _original_resolve_backbone_conflict(self, conflict) -> ResolutionResult:
+        """原始的冲突解决逻辑（保持向后兼容）"""
+        print(f"\n🔧 解决冲突: {conflict.conflict_id}")
+        print(f"   类型: {conflict.conflict_type.value}")
+        print(f"   严重程度: {conflict.severity.value}")
+        print(f"   涉及车辆: {conflict.conflicting_vehicles}")
+        print(f"   优先级顺序: {conflict.priority_order}")
+        print(f"   建议策略: {conflict.suggested_resolution.value}")
+        
+        resolution_start = time.time()
+        
+        # 执行解决策略
+        strategy_func = self.resolution_strategies.get(conflict.suggested_resolution)
+        if not strategy_func:
+            print(f"   ❌ 未知解决策略: {conflict.suggested_resolution}")
+            return ResolutionResult.FAILURE
+        
+        # 尝试解决
+        for attempt in range(self.config['max_resolution_attempts']):
+            print(f"   🔄 第 {attempt + 1} 次尝试...")
+            
+            try:
+                success = strategy_func(conflict)
+                
+                # 记录尝试
+                attempt_record = ResolutionAttempt(
+                    conflict_id=conflict.conflict_id,
+                    strategy=conflict.suggested_resolution,
+                    attempt_time=time.time(),
+                    result=ResolutionResult.SUCCESS if success else ResolutionResult.FAILURE,
+                    vehicles_affected=conflict.conflicting_vehicles.copy()
+                )
+                
+                self.resolution_history.append(attempt_record)
+                
+                if success:
+                    resolution_time = time.time() - resolution_start
+                    
+                    # 更新统计
+                    self._update_resolution_stats(conflict.suggested_resolution, resolution_time)
+                    
+                    # 标记冲突已解决
+                    self.conflict_detector.mark_conflict_resolved(
+                        conflict.conflict_id, 
+                        conflict.suggested_resolution.value
+                    )
+                    
+                    print(f"   ✅ 冲突解决成功，耗时: {resolution_time:.2f}s")
+                    return ResolutionResult.SUCCESS
+                else:
+                    print(f"   ❌ 第 {attempt + 1} 次尝试失败")
+                    
+                    # 如果不是最后一次尝试，尝试备选策略
+                    if attempt < self.config['max_resolution_attempts'] - 1:
+                        conflict.suggested_resolution = self._get_alternative_strategy(
+                            conflict, conflict.suggested_resolution
+                        )
+                        strategy_func = self.resolution_strategies.get(conflict.suggested_resolution)
+                        print(f"   🔄 切换到备选策略: {conflict.suggested_resolution.value}")
+            
+            except Exception as e:
+                print(f"   ⚠️ 解决尝试异常: {e}")
+                continue
+        
+        print(f"   ❌ 冲突解决失败，已达到最大尝试次数")
+        return ResolutionResult.FAILURE
+    
+    def get_consolidation_aware_system_status(self) -> Dict:
+        """获取整理感知的系统状态"""
+        base_status = self.get_system_status()
+        
+        # 添加整理相关状态
+        consolidation_status = {
+            'merged_path_conflicts_tracked': len(self.merged_path_conflicts),
+            'consolidation_config': self.consolidation_config.copy(),
+            'merged_path_details': {}
+        }
+        
+        # 详细的合并路径冲突信息
+        for path_id, merge_info in self.merged_path_conflicts.items():
+            consolidation_status['merged_path_details'][path_id] = {
+                'original_paths_count': len(merge_info.get('original_paths', [])),
+                'merge_quality': merge_info.get('merge_quality', True),
+                'capacity_adjustment': merge_info.get('capacity_adjustment', 1)
+            }
+        
+        base_status['consolidation_status'] = consolidation_status
+        return base_status
+    
+    def debug_consolidation_traffic_management(self):
+        """调试整理后的交通管理"""
+        print("\n" + "="*60)
+        print("🚦 整理感知交通管理调试")
+        print("="*60)
+        
+        print(f"跟踪的合并路径: {len(self.merged_path_conflicts)} 条")
+        
+        for path_id, merge_info in self.merged_path_conflicts.items():
+            print(f"\n合并路径 {path_id}:")
+            print(f"  原始路径数: {len(merge_info.get('original_paths', []))}")
+            print(f"  合并质量: {'高' if merge_info.get('merge_quality', True) else '低'}")
+            print(f"  容量因子: {merge_info.get('capacity_adjustment', 1)}")
+        
+        print(f"\n整理感知策略: {len(self.consolidation_aware_strategies)} 个")
+        for strategy_name in self.consolidation_aware_strategies.keys():
+            print(f"  - {strategy_name}")
+        
+        print(f"\n配置状态:")
+        for key, value in self.consolidation_config.items():
+            print(f"  {key}: {value}")
+        
+        print("="*60)
 
-# 创建系统
-system = create_integrated_backbone_system(env, backbone_network, path_planner)
+# optimized_planner_config.py 中需要添加的方法和修改
 
-# 车辆任务分配（自动处理冲突）
-scheduler = system['vehicle_scheduler']
-success = scheduler.assign_task_with_corridors(task_id, vehicle_id)
-关键数据流
-任务创建 → 骨干路径规划 → 节点时序计算 → 路径段占用记录 → 冲突检测 → 
-先到先行+优先级排序 → 策略选择 → 冲突解决 → 路径更新
+class EnhancedPathPlannerWithConfig:
+    
+    def __init__(self, env, backbone_network=None, traffic_manager=None):
+        # ... 原有初始化代码 ...
+        
+        # 新增：整理适配配置
+        self.consolidation_config = {
+            'prefer_original_paths': False,      # 是否优先使用原始路径
+            'adjust_quality_threshold': True,    # 动态调整质量阈值
+            'consolidation_aware_planning': True, # 整理感知规划
+            'cache_consolidated_results': True   # 缓存整理后的结果
+        }
+        
+        # 整理相关缓存
+        self.consolidated_path_cache = {}  # {(start, goal, path_type): result}
+        self.path_quality_adjustments = {}  # {path_id: quality_adjustment}
+        
+        print("路径规划器支持骨干网络整理适配")
+    
+    def plan_path(self, vehicle_id: str, start: tuple, goal: tuple,
+                use_backbone: bool = True, check_conflicts: bool = True,
+                planner_type: str = "auto", context: str = "normal",
+                return_object: bool = False, **kwargs) -> Any:
+        """
+        整理感知的路径规划接口
+        """
+        
+        # ===== 整理感知的骨干网络使用 =====
+        if use_backbone and self.backbone_network and context != 'backbone':
+            print(f"[EnhancedPathPlannerWithConfig] 整理感知骨干网络规划: {vehicle_id}")
+            
+            # 检查骨干网络是否已整理
+            is_consolidated = getattr(self.backbone_network, 'is_consolidated', False)
+            
+            if is_consolidated and self.consolidation_config['consolidation_aware_planning']:
+                # 使用整理感知规划
+                backbone_result = self._plan_with_consolidated_backbone(
+                    vehicle_id, start, goal, **kwargs
+                )
+                
+                if backbone_result:
+                    print(f"  ✅ 整理感知骨干网络路径成功!")
+                    
+                    if return_object:
+                        return backbone_result
+                    elif hasattr(backbone_result, 'path'):
+                        return backbone_result.path
+                    else:
+                        return backbone_result
+            
+            # 回退到原有骨干网络逻辑
+            target_type = kwargs.get('target_type')
+            target_id = kwargs.get('target_id')
+            
+            if target_type and target_id is not None:
+                try:
+                    backbone_result = self.backbone_network.get_path_from_position_to_target(
+                        start, target_type, target_id, vehicle_id
+                    )
+                    
+                    if backbone_result:
+                        print(f"  ✅ 标准骨干网络路径成功!")
+                        
+                        if isinstance(backbone_result, tuple) and len(backbone_result) >= 2:
+                            path, structure = backbone_result
+                            result = self._create_result_object(path, 'backbone_network', len(path))
+                            result.structure = structure
+                            
+                            if return_object:
+                                return result
+                            else:
+                                return path
+                        else:
+                            return backbone_result
+                except Exception as e:
+                    print(f"  骨干网络尝试失败: {e}")
+        
+        # ===== 原有逻辑：渐进式回退 =====
+        result = self.plan_path_with_progressive_fallback(
+            vehicle_id, start, goal, context, **kwargs
+        )
+        
+        # 根据return_object参数返回不同格式
+        if return_object and result:
+            return result
+        elif result and hasattr(result, 'path'):
+            return result.path
+        else:
+            return result
+    
+    def _plan_with_consolidated_backbone(self, vehicle_id: str, start: tuple, goal: tuple, **kwargs):
+        """使用整理后骨干网络的智能规划"""
+        target_type = kwargs.get('target_type')
+        target_id = kwargs.get('target_id')
+        
+        if not target_type or target_id is None:
+            return None
+        
+        # 检查缓存
+        cache_key = (start, goal, target_type, target_id, 'consolidated')
+        if (self.consolidation_config['cache_consolidated_results'] and 
+            cache_key in self.consolidated_path_cache):
+            cached_result = self.consolidated_path_cache[cache_key]
+            print(f"    使用整理路径缓存")
+            return cached_result
+        
+        try:
+            # 获取到目标的候选路径
+            candidate_paths = self._get_consolidated_candidate_paths(target_type, target_id)
+            
+            if not candidate_paths:
+                return None
+            
+            # 整理感知的路径选择
+            best_path_data = self._select_best_consolidated_path(
+                candidate_paths, vehicle_id, start
+            )
+            
+            if not best_path_data:
+                return None
+            
+            # 规划到最佳整理路径
+            backbone_result = self.backbone_network.get_path_from_position_to_target(
+                start, target_type, target_id, vehicle_id
+            )
+            
+            if backbone_result:
+                # 缓存结果
+                if self.consolidation_config['cache_consolidated_results']:
+                    self.consolidated_path_cache[cache_key] = backbone_result
+                
+                return backbone_result
+            
+        except Exception as e:
+            print(f"    整理感知规划异常: {e}")
+        
+        return None
+    
+    def _get_consolidated_candidate_paths(self, target_type: str, target_id: int) -> List:
+        """获取整理后的候选路径"""
+        candidates = []
+        
+        if not self.backbone_network:
+            return candidates
+        
+        for path_id, path_data in self.backbone_network.bidirectional_paths.items():
+            if ((path_data.point_a['type'] == target_type and 
+                 path_data.point_a['id'] == target_id) or
+                (path_data.point_b['type'] == target_type and 
+                 path_data.point_b['id'] == target_id)):
+                
+                # 添加整理信息
+                path_info = {
+                    'path_data': path_data,
+                    'path_type': getattr(path_data, 'path_type', 'original'),
+                    'original_paths': getattr(path_data, 'original_paths', []),
+                    'consolidation_quality': self._get_consolidation_quality(path_data)
+                }
+                
+                candidates.append(path_info)
+        
+        return candidates
+    
+    def _get_consolidation_quality(self, path_data) -> float:
+        """获取路径的整理质量"""
+        # 基础质量
+        base_quality = getattr(path_data, 'quality', 0.5)
+        
+        # 整理质量调整
+        consolidation_info = getattr(path_data, 'consolidation_info', {})
+        path_type = getattr(path_data, 'path_type', 'original')
+        
+        if path_type == 'merged':
+            # 合并路径的质量调整
+            quality_preserved = consolidation_info.get('quality_preserved', True)
+            
+            if quality_preserved:
+                # 质量保持良好的合并路径，轻微加分
+                adjustment = 0.05
+            else:
+                # 质量有损失的合并路径，轻微减分
+                adjustment = -0.1
+            
+            # 考虑合并数量
+            merged_count = consolidation_info.get('merged_count', 1)
+            if merged_count > 3:
+                # 合并路径过多可能影响质量
+                adjustment -= 0.05
+            
+            return max(0.1, min(1.0, base_quality + adjustment))
+        
+        elif path_type == 'original':
+            # 保留的原始路径通常质量更可靠
+            if self.consolidation_config['prefer_original_paths']:
+                return min(1.0, base_quality + 0.1)
+        
+        return base_quality
+    
+    def _select_best_consolidated_path(self, candidates: List, vehicle_id: str, start: tuple):
+        """选择最佳的整理后路径"""
+        if not candidates:
+            return None
+        
+        best_candidate = None
+        best_score = float('inf')
+        
+        for candidate in candidates:
+            path_data = candidate['path_data']
+            path_type = candidate['path_type']
+            consolidation_quality = candidate['consolidation_quality']
+            
+            # 计算综合评分
+            # 1. 质量分数（越高越好，转换为越小越好）
+            quality_score = (1.0 - consolidation_quality) * 100
+            
+            # 2. 负载分数
+            load_factor = path_data.get_load_factor()
+            load_score = load_factor * 50
+            
+            # 3. 距离分数
+            distance_score = self._calculate_path_distance_score(path_data, start)
+            
+            # 4. 整理类型偏好
+            type_score = 0
+            if self.consolidation_config['prefer_original_paths']:
+                if path_type == 'original':
+                    type_score = -10  # 原始路径加分
+                elif path_type == 'merged':
+                    type_score = 5    # 合并路径轻微减分
+            else:
+                # 不偏好原始路径时，合并路径可能更优化
+                if path_type == 'merged':
+                    merged_count = len(candidate.get('original_paths', []))
+                    if merged_count > 1:
+                        type_score = -5  # 合并路径加分
+            
+            # 综合评分
+            total_score = quality_score + load_score + distance_score + type_score
+            
+            if total_score < best_score:
+                best_score = total_score
+                best_candidate = candidate
+        
+        if best_candidate:
+            path_type = best_candidate['path_type']
+            path_id = best_candidate['path_data'].path_id
+            print(f"    选择整理路径: {path_id} (类型: {path_type}, 评分: {best_score:.1f})")
+        
+        return best_candidate['path_data'] if best_candidate else None
+    
+    def _calculate_path_distance_score(self, path_data, start: tuple) -> float:
+        """计算路径距离评分"""
+        if not path_data.forward_path:
+            return 1000.0  # 惩罚分
+        
+        # 到路径起点的距离
+        path_start = path_data.forward_path[0]
+        distance = math.sqrt(
+            (start[0] - path_start[0])**2 + 
+            (start[1] - path_start[1])**2
+        )
+        
+        return distance
+    
+    def get_consolidation_planning_stats(self) -> Dict:
+        """获取整理规划统计"""
+        cache_stats = {
+            'cache_size': len(self.consolidated_path_cache),
+            'cache_hit_ratio': 0.0  # 需要在实际使用中计算
+        }
+        
+        quality_adjustments = {
+            'paths_with_adjustments': len(self.path_quality_adjustments),
+            'average_adjustment': 0.0
+        }
+        
+        if self.path_quality_adjustments:
+            quality_adjustments['average_adjustment'] = (
+                sum(self.path_quality_adjustments.values()) / 
+                len(self.path_quality_adjustments)
+            )
+        
+        return {
+            'config': self.consolidation_config.copy(),
+            'cache_stats': cache_stats,
+            'quality_adjustments': quality_adjustments
+        }
+    
+    def clear_consolidation_cache(self):
+        """清除整理相关缓存"""
+        self.consolidated_path_cache.clear()
+        self.path_quality_adjustments.clear()
+        print("整理规划缓存已清除")
+
+# environment.py 中需要添加的方法和修改
+
+class OptimizedOpenPitMineEnv:
+    
+    def __init__(self, config=None):
+        # ... 原有初始化代码 ...
+        
+        # 新增：整理适配状态
+        self.consolidation_state = {
+            'backbone_consolidated': False,
+            'consolidation_timestamp': 0.0,
+            'pre_consolidation_stats': {},
+            'post_consolidation_stats': {}
+        }
+        
+        print("环境管理器支持骨干网络整理适配")
+    
+    def handle_backbone_consolidation_event(self, backbone_network, consolidation_results: Dict):
+        """处理骨干网络整理事件"""
+        print(f"\n🌍 环境管理器处理骨干网络整理事件...")
+        
+        try:
+            # 记录整理前状态
+            self.consolidation_state['pre_consolidation_stats'] = {
+                'vehicle_count': len(self.vehicles),
+                'active_vehicles': self._count_active_vehicles(),
+                'loading_points': len(self.loading_points),
+                'unloading_points': len(self.unloading_points)
+            }
+            
+            # 更新整理状态
+            self.consolidation_state['backbone_consolidated'] = True
+            self.consolidation_state['consolidation_timestamp'] = time.time()
+            
+            # 验证车辆兼容性
+            compatibility_issues = self._verify_vehicle_consolidation_compatibility()
+            
+            if compatibility_issues:
+                print(f"   ⚠️ 发现 {len(compatibility_issues)} 个车辆兼容性问题")
+                self._fix_vehicle_compatibility_issues(compatibility_issues)
+            
+            # 更新车辆安全参数
+            self._update_vehicle_safety_for_consolidation()
+            
+            # 记录整理后状态
+            self.consolidation_state['post_consolidation_stats'] = {
+                'vehicle_count': len(self.vehicles),
+                'active_vehicles': self._count_active_vehicles(),
+                'compatibility_issues_fixed': len(compatibility_issues)
+            }
+            
+            print(f"   ✅ 环境整理适配完成")
+            return True
+            
+        except Exception as e:
+            print(f"   ❌ 环境整理适配失败: {e}")
+            return False
+    
+    def _count_active_vehicles(self) -> int:
+        """统计活跃车辆数量"""
+        active_count = 0
+        
+        for vehicle_id, vehicle_info in self.vehicles.items():
+            status = vehicle_info.get('status', 'idle') if hasattr(vehicle_info, 'get') else getattr(vehicle_info, 'status', 'idle')
+            
+            if status not in ['idle', 'maintenance']:
+                active_count += 1
+        
+        return active_count
+    
+    def _verify_vehicle_consolidation_compatibility(self) -> List[str]:
+        """验证车辆与整理后网络的兼容性"""
+        compatibility_issues = []
+        
+        for vehicle_id, vehicle_info in self.vehicles.items():
+            # 检查车辆是否有有效的安全参数
+            if hasattr(vehicle_info, 'safety_params'):
+                safety_params = vehicle_info.safety_params
+                
+                # 检查安全参数完整性
+                required_params = ['length', 'width', 'safety_margin', 'turning_radius']
+                
+                for param in required_params:
+                    if not hasattr(safety_params, param) or getattr(safety_params, param) <= 0:
+                        compatibility_issues.append(f"{vehicle_id}: 缺少有效的{param}参数")
+            else:
+                compatibility_issues.append(f"{vehicle_id}: 缺少安全参数")
+            
+            # 检查车辆位置有效性
+            position = vehicle_info.get('position') if hasattr(vehicle_info, 'get') else getattr(vehicle_info, 'position', None)
+            
+            if not position or len(position) < 3:
+                compatibility_issues.append(f"{vehicle_id}: 位置信息无效")
+        
+        return compatibility_issues
+    
+    def _fix_vehicle_compatibility_issues(self, issues: List[str]):
+        """修复车辆兼容性问题"""
+        for issue in issues:
+            vehicle_id = issue.split(':')[0]
+            
+            if vehicle_id not in self.vehicles:
+                continue
+            
+            vehicle_info = self.vehicles[vehicle_id]
+            
+            # 修复安全参数
+            if "缺少安全参数" in issue or "缺少有效的" in issue:
+                if not hasattr(vehicle_info, 'safety_params'):
+                    # 创建默认安全参数
+                    from environment import VehicleSafetyParams
+                    vehicle_info.safety_params = VehicleSafetyParams()
+                    print(f"      为车辆 {vehicle_id} 创建默认安全参数")
+                else:
+                    # 修复具体参数
+                    safety_params = vehicle_info.safety_params
+                    
+                    if not hasattr(safety_params, 'length') or safety_params.length <= 0:
+                        safety_params.length = 6.0
+                    if not hasattr(safety_params, 'width') or safety_params.width <= 0:
+                        safety_params.width = 3.0
+                    if not hasattr(safety_params, 'safety_margin') or safety_params.safety_margin <= 0:
+                        safety_params.safety_margin = 1.5
+                    if not hasattr(safety_params, 'turning_radius') or safety_params.turning_radius <= 0:
+                        safety_params.turning_radius = 8.0
+                    
+                    print(f"      修复车辆 {vehicle_id} 安全参数")
+            
+            # 修复位置信息
+            if "位置信息无效" in issue:
+                # 设置默认位置
+                default_position = (10.0, 10.0, 0.0)
+                
+                if hasattr(vehicle_info, 'position'):
+                    vehicle_info.position = default_position
+                elif hasattr(vehicle_info, '__setitem__'):
+                    vehicle_info['position'] = default_position
+                
+                print(f"      修复车辆 {vehicle_id} 位置信息")
+    
+    def _update_vehicle_safety_for_consolidation(self):
+        """为整理后的网络更新车辆安全参数"""
+        if not hasattr(self, 'collision_detector'):
+            return
+        
+        for vehicle_id, vehicle_info in self.vehicles.items():
+            if hasattr(vehicle_info, 'safety_params'):
+                safety_params = vehicle_info.safety_params
+                
+                # 为整理后的网络优化安全参数
+                if hasattr(safety_params, 'to_dict'):
+                    safety_dict = safety_params.to_dict()
+                    
+                    # 注册到碰撞检测器
+                    self.collision_detector.safe_interface_manager.register_vehicle_safety_params(
+                        vehicle_id, safety_dict
+                    )
+    
+    def get_consolidation_environment_status(self) -> Dict:
+        """获取整理后的环境状态"""
+        base_status = self.get_environment_summary()
+        
+        # 添加整理状态信息
+        consolidation_status = {
+            'is_consolidated': self.consolidation_state['backbone_consolidated'],
+            'consolidation_timestamp': self.consolidation_state['consolidation_timestamp'],
+            'pre_consolidation_stats': self.consolidation_state['pre_consolidation_stats'],
+            'post_consolidation_stats': self.consolidation_state['post_consolidation_stats']
+        }
+        
+        if self.consolidation_state['backbone_consolidated']:
+            consolidation_time = time.time() - self.consolidation_state['consolidation_timestamp']
+            consolidation_status['time_since_consolidation'] = consolidation_time
+        
+        base_status['consolidation_status'] = consolidation_status
+        return base_status
+    
+    def debug_consolidation_environment(self):
+        """调试整理后的环境状态"""
+        print("\n" + "="*60)
+        print("🌍 整理后环境状态调试")
+        print("="*60)
+        
+        status = self.get_consolidation_environment_status()
+        consolidation_status = status.get('consolidation_status', {})
+        
+        print(f"骨干网络已整理: {consolidation_status.get('is_consolidated', False)}")
+        
+        if consolidation_status.get('is_consolidated'):
+            timestamp = consolidation_status.get('consolidation_timestamp', 0)
+            time_since = time.time() - timestamp
+            print(f"整理完成时间: {time_since:.1f}秒前")
+            
+            pre_stats = consolidation_status.get('pre_consolidation_stats', {})
+            post_stats = consolidation_status.get('post_consolidation_stats', {})
+            
+            print(f"\n整理前后对比:")
+            print(f"  车辆数量: {pre_stats.get('vehicle_count', 0)} -> {post_stats.get('vehicle_count', 0)}")
+            print(f"  活跃车辆: {pre_stats.get('active_vehicles', 0)} -> {post_stats.get('active_vehicles', 0)}")
+            print(f"  兼容性问题修复: {post_stats.get('compatibility_issues_fixed', 0)} 个")
+        
+        print("="*60)
+
+# 系统集成方法
+def setup_system_consolidation_integration(system_components: Dict):
+    """设置系统整理集成"""
+    backbone_network = system_components.get('backbone_network')
+    vehicle_scheduler = system_components.get('vehicle_scheduler')
+    traffic_manager = system_components.get('traffic_manager')
+    path_planner = system_components.get('path_planner')
+    env = system_components.get('env')
+    
+    if not backbone_network:
+        print("❌ 缺少骨干网络组件")
+        return False
+    
+    # 设置整理事件回调
+    def consolidation_event_handler(consolidation_results):
+        print("🔗 处理系统级骨干网络整理事件...")
+        
+        # 通知各个组件
+        success_count = 0
+        
+        if vehicle_scheduler and hasattr(vehicle_scheduler, 'handle_backbone_network_consolidation'):
+            if vehicle_scheduler.handle_backbone_network_consolidation(consolidation_results):
+                success_count += 1
+        
+        if traffic_manager and hasattr(traffic_manager, 'handle_backbone_consolidation_event'):
+            if traffic_manager.handle_backbone_consolidation_event(consolidation_results):
+                success_count += 1
+        
+        if env and hasattr(env, 'handle_backbone_consolidation_event'):
+            if env.handle_backbone_consolidation_event(backbone_network, consolidation_results):
+                success_count += 1
+        
+        print(f"✅ 系统整理集成完成: {success_count} 个组件成功适配")
+        return success_count > 0
+    
+    # 注册回调（如果骨干网络支持）
+    if hasattr(backbone_network, 'set_consolidation_callback'):
+        backbone_network.set_consolidation_callback(consolidation_event_handler)
+        print("✅ 系统整理事件回调已注册")
+        return True
+    else:
+        print("⚠️ 骨干网络不支持整理事件回调")
+        return False
+
+# 骨干网络整理系统集成指南
+
+## 概述
+
+你的骨干路径网络添加了节点整合和拓扑结构整理功能后，需要对其他系统组件进行适配，以确保整个多车协同调度系统能够正确处理整理后的网络结构。
+
+## 需要适配的组件
+
+### 1. GUI 显示组件 (`gui.py`)
+
+**问题**: GUI 需要能够可视化整理后的网络结构，区分原始路径和合并路径。
+
+**解决方案**:
+- 添加 `_draw_consolidated_backbone_network()` 方法
+- 实现不同路径类型的差异化显示（合并路径用橙色，原始路径用蓝色）
+- 显示整理统计信息（压缩率、路径数量变化等）
+
+### 2. 车辆调度器 (`vehicle_scheduler.py`)
+
+**问题**: 任务分配时需要处理路径ID变化，以及合并路径的特殊性。
+
+**解决方案**:
+- 添加 `handle_backbone_network_consolidation()` 方法处理整理事件
+- 实现路径映射机制 (`_build_path_mapping()`)
+- 重映射活跃任务到新的路径结构
+- 提供整理感知的任务分配策略
+
+### 3. 交通管理器 (`traffic_manager.py`)
+
+**问题**: 冲突检测和解决需要考虑合并路径的特殊性质。
+
+**解决方案**:
+- 添加合并路径冲突的特殊处理逻辑
+- 实现整理感知的冲突解决策略
+- 调整合并路径的冲突严重程度评估
+
+### 4. 路径规划器 (`optimized_planner_config.py`)
+
+**问题**: 需要支持在整理后的网络中进行智能路径选择。
+
+**解决方案**:
+- 添加整理感知的路径选择算法
+- 实现路径质量动态调整机制
+- 提供整理后路径的缓存优化
+
+### 5. 环境管理器 (`environment.py`)
+
+**问题**: 需要验证车辆与整理后网络的兼容性。
+
+**解决方案**:
+- 验证车辆安全参数完整性
+- 处理整理事件对环境状态的影响
+- 提供环境级的整理状态监控
+
+## 集成步骤
+
+### 步骤 1: 添加整理回调机制
+
+在 `optimized_backbone_network.py` 中添加回调支持：
+
+```python
+class OptimizedBackboneNetwork:
+    def __init__(self, env):
+        # ... 现有代码 ...
+        self.consolidation_callback = None
+    
+    def set_consolidation_callback(self, callback):
+        """设置整理事件回调"""
+        self.consolidation_callback = callback
+    
+    def consolidate_network_improved(self, apply_immediately=True, report=True) -> bool:
+        """改进的骨干网络整理 - 触发回调"""
+        # ... 现有整理逻辑 ...
+        
+        if success and self.consolidation_callback:
+            # 触发整理事件回调
+            self.consolidation_callback(self.consolidator.consolidation_results)
+        
+        return success
+```
+
+### 步骤 2: 更新系统组件
+
+将上述提供的适配代码添加到对应的文件中：
+
+1. **GUI 组件**: 更新 `gui.py` 中的网络绘制方法
+2. **车辆调度器**: 添加整理适配方法到 `vehicle_scheduler.py`
+3. **交通管理器**: 添加整理感知策略到 `traffic_manager.py`
+4. **路径规划器**: 更新 `optimized_planner_config.py` 的规划逻辑
+5. **环境管理器**: 添加兼容性验证到 `environment.py`
+
+### 步骤 3: 设置系统集成
+
+在主程序中设置集成：
+
+```python
+def setup_integrated_system_with_consolidation():
+    # 创建基础组件
+    env = OptimizedOpenPitMineEnv()
+    backbone_network = OptimizedBackboneNetwork(env)
+    path_planner = EnhancedPathPlannerWithConfig(env, backbone_network)
+    
+    # 创建系统组件
+    system_components = create_integrated_backbone_system(
+        env, backbone_network, path_planner
+    )
+    
+    # 设置整理集成
+    setup_system_consolidation_integration({
+        'backbone_network': backbone_network,
+        'vehicle_scheduler': system_components['vehicle_scheduler'],
+        'traffic_manager': system_components['traffic_manager'],
+        'path_planner': path_planner,
+        'env': env
+    })
+    
+    return system_components
+```
+
+### 步骤 4: 测试整理适配
+
+```python
+def test_consolidation_adaptation():
+    # 设置系统
+    components = setup_integrated_system_with_consolidation()
+    
+    # 生成骨干网络（会自动触发整理）
+    backbone_network = components['backbone_network']
+    success = backbone_network.generate_backbone_network()
+    
+    if success:
+        # 检查各组件的适配状态
+        scheduler = components['vehicle_scheduler']
+        traffic_mgr = components['traffic_manager']
+        
+        print("=== 整理适配测试 ===")
+        scheduler.debug_consolidation_adaptation()
+        traffic_mgr.debug_consolidation_traffic_management()
+        
+        # 创建和分配任务测试
+        task_id = scheduler.create_transport_task(
+            start_location=(50, 50, 0),
+            end_location=(450, 450, 0)
+        )
+        
+        assignment_success = scheduler.assign_task(task_id)
+        print(f"整理后任务分配: {'成功' if assignment_success else '失败'}")
+```
+
+## 配置选项
+
+### 整理行为配置
+
+```python
+# 在创建骨干网络时配置整理行为
+backbone_network.set_consolidation_config(
+    auto_consolidate=True,                   # 自动整理
+    node_overlap_threshold=0.8,              # 节点重叠阈值
+    path_similarity_threshold=0.92,          # 路径相似度阈值
+    preserve_connectivity=True,              # 保持连通性
+    enable_quality_validation=True           # 启用质量验证
+)
+```
+
+### 组件适配配置
+
+```python
+# 车辆调度器配置
+scheduler.consolidation_config.update({
+    'track_path_changes': True,              # 跟踪路径变化
+    'auto_remap_tasks': True,                # 自动重映射任务
+    'consolidation_aware_assignment': True   # 整理感知分配
+})
+
+# 交通管理器配置
+traffic_manager.consolidation_config.update({
+    'handle_merged_path_conflicts': True,    # 处理合并路径冲突
+    'adaptive_resolution_strategy': True     # 自适应解决策略
+})
+
+# 路径规划器配置
+path_planner.consolidation_config.update({
+    'consolidation_aware_planning': True,    # 整理感知规划
+    'prefer_original_paths': False,          # 不偏好原始路径
+    'cache_consolidated_results': True       # 缓存整理结果
+})
+```
+
+## 监控和调试
+
+### 整理状态监控
+
+```python
+# 获取整理状态
+network_status = backbone_network.get_network_status()
+consolidation_info = network_status['improved_consolidation_status']
+
+print(f"网络已整理: {consolidation_info['is_consolidated']}")
+print(f"路径压缩率: {consolidation_info['reduction_ratio']:.1%}")
+```
+
+### 组件适配状态
+
+```python
+# 检查各组件适配状态
+scheduler_status = scheduler.get_consolidation_status()
+traffic_status = traffic_manager.get_consolidation_aware_system_status()
+planner_stats = path_planner.get_consolidation_planning_stats()
+
+print("=== 系统适配状态 ===")
+print(f"调度器重映射任务: {scheduler_status['remapped_tasks']}")
+print(f"交通管理器跟踪合并路径: {traffic_status['consolidation_status']['merged_path_conflicts_tracked']}")
+print(f"规划器缓存大小: {planner_stats['cache_stats']['cache_size']}")
+```
+
+## 注意事项
+
+1. **向后兼容性**: 所有修改都保持了向后兼容性，未整理的网络仍能正常工作。
+
+2. **性能影响**: 整理过程本身有计算开销，但整理后的网络通常具有更好的性能。
+
+3. **质量保证**: 整理过程包含质量验证，如果质量下降过多会回退到原始网络。
+
+4. **调试工具**: 每个组件都提供了专门的调试方法来检查整理适配状态。
+
+5. **事件驱动**: 使用回调机制确保所有组件都能及时响应整理事件。
+
+## 常见问题解决
+
+### 问题 1: 整理后任务分配失败
+**原因**: 路径映射不完整
+**解决**: 检查 `path_mapping_history` 和 `consolidated_path_info`
+
+### 问题 2: 冲突检测异常
+**原因**: 冲突检测器中的路径记录未更新
+**解决**: 确保调用 `_update_conflict_detector_records()`
+
+### 问题 3: GUI 显示不正确
+**原因**: 未调用 `update_backbone_network_display()`
+**解决**: 在整理完成后手动更新显示
+
+通过以上集成指南，你的系统应该能够完全适配新的骨干路径网络整理功能。
