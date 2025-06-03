@@ -260,7 +260,8 @@ class EnhancedPathPlannerWithConfig:
         """使用优化配置初始化规划器"""
         try:
             # 初始化混合A*（使用标准配置）
-            from astar import HybridAStarPlanner
+            #from astar import HybridAStarPlanner
+            from eastar import HybridAStarPlanner
             astar_config = self.config_manager.get_astar_config('standard')
             
             self.planners['hybrid_astar'] = HybridAStarPlanner(
