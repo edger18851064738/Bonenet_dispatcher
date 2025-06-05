@@ -1389,15 +1389,22 @@ class EnhancedMineGUI(QMainWindow):
             path_item.setZValue(-25)
             
             scene.addItem(path_item)
+        
+        # 绘制关键节点（替换原来的接口节点部分）
+        if hasattr(self.backbone_network, 'consolidation_info') and self.backbone_network.consolidation_info:
+            key_nodes = self.backbone_network.consolidation_info.get('key_nodes', {})
             
-            # 绘制骨干路径节点（每隔8个点画一个节点）
-            interface_spacing = 8
-            for i in range(0, len(path_data.forward_path), interface_spacing):
-                if i >= len(path_data.forward_path):
-                    break
+            for i, (node_id, key_node) in enumerate(key_nodes.items()):
+                # 获取位置
+                if hasattr(key_node, 'position'):
+                    x, y = key_node.position[0], key_node.position[1]
+                elif isinstance(key_node, dict) and 'position' in key_node:
+                    x, y = key_node['position'][0], key_node['position'][1]
+                else:
+                    continue
                 
-                point = path_data.forward_path[i]
-                x, y = point[0], point[1]
+                # 使用路径颜色（可以选择一个默认颜色）
+                color = QColor(66, 135, 245)  # 使用蓝色作为默认
                 
                 # 创建节点（小圆圈，半径0.5）
                 node_circle = QGraphicsEllipseItem(x-0.5, y-0.5, 1.0, 1.0)
@@ -1408,9 +1415,8 @@ class EnhancedMineGUI(QMainWindow):
                 scene.addItem(node_circle)
                 
                 # 可选：添加节点编号文本（很小）
-                if i % (interface_spacing * 2) == 0:  # 每隔16个点显示一个编号
-                    node_index = i // interface_spacing
-                    text_item = QGraphicsTextItem(str(node_index))
+                if i % 2 == 0:  # 每隔一个节点显示编号
+                    text_item = QGraphicsTextItem(str(i))
                     text_item.setPos(x + 1, y + 1)
                     text_item.setDefaultTextColor(color)
                     text_item.setFont(QFont("Arial", 1))

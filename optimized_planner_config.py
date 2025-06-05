@@ -1,6 +1,7 @@
 """
 integrated_planner_config.py - 整合优化版路径规划器配置
 完美适应网络整理、双重冲突检测、多阶段任务调度的规划器配置系统
+使用RS曲线避障连接替换RRT规划器
 """
 
 import math
@@ -16,6 +17,13 @@ try:
     CONSOLIDATION_AVAILABLE = True
 except ImportError:
     CONSOLIDATION_AVAILABLE = False
+
+# 导入RS曲线模块
+try:
+    from eastar import MiningOptimizedReedShepp
+    RS_CURVES_AVAILABLE = True
+except ImportError:
+    RS_CURVES_AVAILABLE = False
 
 class NetworkTopologyType(Enum):
     """网络拓扑类型"""
@@ -155,47 +163,64 @@ class IntegratedPlannerConfig:
             }
         }
         
-        # RRT配置 - 多阶段任务适应版
-        self.rrt_configs = {
+        # RS曲线配置 - 替换原RRT配置，多阶段任务适应版
+        self.rs_curve_configs = {
             'standard_multi_stage': {
-                'vehicle_length': 5.5,
-                'vehicle_width': 2.5,
-                'turning_radius': 5.5,
-                'step_size': 0.9,
-                'max_nodes': 7000,
-                'goal_bias': 0.18,
-                'quality_threshold': 0.55,
-                'enable_dynamics_optimization': True,
-                'stage_aware_sampling': True,
-                'inter_stage_optimization': True
+                'vehicle_length': 6.0,
+                'vehicle_width': 3.0,
+                'turning_radius': 8.0,
+                'step_size': 0.8,
+                'quality_threshold': 0.6,
+                'max_curve_attempts': 5,
+                'smoothness_preference': 0.8,
+                'enable_obstacle_avoidance': True,
+                'stage_aware_curves': True,
+                'inter_stage_optimization': True,
+                'curve_complexity_limit': 3.0  # 限制曲线复杂度
             },
             'fast_consolidated': {
-                'vehicle_length': 5.5,
-                'vehicle_width': 2.5,
-                'turning_radius': 5.0,
-                'step_size': 1.1,
-                'max_nodes': 5000,
-                'goal_bias': 0.22,
-                'quality_threshold': 0.45,
-                'enable_dynamics_optimization': False,
+                'vehicle_length': 6.0,
+                'vehicle_width': 3.0,
+                'turning_radius': 7.5,
+                'step_size': 1.0,
+                'quality_threshold': 0.5,
+                'max_curve_attempts': 3,
+                'smoothness_preference': 0.7,
+                'enable_obstacle_avoidance': True,
                 'consolidation_aware': True,
-                'prefer_trunk_paths': True
+                'prefer_trunk_paths': True,
+                'curve_complexity_limit': 2.5
             },
             'spatial_aware': {
-                'vehicle_length': 5.5,
-                'vehicle_width': 2.5,
-                'turning_radius': 5.8,
-                'step_size': 0.8,
-                'max_nodes': 6000,
-                'goal_bias': 0.15,
-                'quality_threshold': 0.5,
-                'enable_dynamics_optimization': True,
+                'vehicle_length': 6.0,
+                'vehicle_width': 3.0,
+                'turning_radius': 8.5,
+                'step_size': 0.6,
+                'quality_threshold': 0.65,
+                'max_curve_attempts': 6,
+                'smoothness_preference': 0.9,
+                'enable_obstacle_avoidance': True,
                 'spatial_conflict_avoidance': True,
-                'safety_margin_boost': 1.3
+                'safety_margin_boost': 1.3,
+                'curve_complexity_limit': 3.5,
+                'precision_mode': True
+            },
+            'aggressive_fallback': {
+                'vehicle_length': 6.0,
+                'vehicle_width': 3.0,
+                'turning_radius': 6.0,
+                'step_size': 1.2,
+                'quality_threshold': 0.35,
+                'max_curve_attempts': 2,
+                'smoothness_preference': 0.5,
+                'enable_obstacle_avoidance': False,
+                'aggressive_mode': True,
+                'curve_complexity_limit': 2.0,
+                'allow_sharp_turns': True
             }
         }
         
-        # 网络感知的渐进式回退策略
+        # 网络感知的渐进式回退策略 - 更新为使用RS曲线
         self.network_aware_fallback_strategies = {
             NetworkTopologyType.ORIGINAL: [
                 {
@@ -215,10 +240,10 @@ class IntegratedPlannerConfig:
                     'network_specific': False
                 },
                 {
-                    'name': 'rrt_standard_multi_stage',
-                    'planner': 'rrt',
+                    'name': 'rs_standard_multi_stage',
+                    'planner': 'rs_curves',
                     'config': 'standard_multi_stage',
-                    'max_time': 15.0,
+                    'max_time': 12.0,
                     'priority': 3,
                     'network_specific': False
                 },
@@ -231,11 +256,19 @@ class IntegratedPlannerConfig:
                     'network_specific': False
                 },
                 {
+                    'name': 'rs_aggressive_fallback',
+                    'planner': 'rs_curves',
+                    'config': 'aggressive_fallback',
+                    'max_time': 8.0,
+                    'priority': 5,
+                    'network_specific': False
+                },
+                {
                     'name': 'direct_fallback',
                     'planner': 'direct',
                     'config': None,
                     'max_time': 1.0,
-                    'priority': 5,
+                    'priority': 6,
                     'network_specific': False
                 }
             ],
@@ -250,10 +283,10 @@ class IntegratedPlannerConfig:
                     'network_specific': True
                 },
                 {
-                    'name': 'rrt_fast_consolidated',
-                    'planner': 'rrt',
+                    'name': 'rs_fast_consolidated',
+                    'planner': 'rs_curves',
                     'config': 'fast_consolidated',
-                    'max_time': 12.0,
+                    'max_time': 10.0,
                     'priority': 2,
                     'network_specific': True
                 },
@@ -266,11 +299,19 @@ class IntegratedPlannerConfig:
                     'network_specific': False
                 },
                 {
-                    'name': 'rrt_spatial_aware',
-                    'planner': 'rrt',
+                    'name': 'rs_spatial_aware',
+                    'planner': 'rs_curves',
                     'config': 'spatial_aware',
-                    'max_time': 15.0,
+                    'max_time': 13.0,
                     'priority': 4,
+                    'network_specific': False
+                },
+                {
+                    'name': 'rs_aggressive_fallback',
+                    'planner': 'rs_curves',
+                    'config': 'aggressive_fallback',
+                    'max_time': 8.0,
+                    'priority': 5,
                     'network_specific': False
                 },
                 {
@@ -278,7 +319,7 @@ class IntegratedPlannerConfig:
                     'planner': 'direct',
                     'config': None,
                     'max_time': 1.0,
-                    'priority': 5,
+                    'priority': 6,
                     'network_specific': False
                 }
             ],
@@ -293,10 +334,10 @@ class IntegratedPlannerConfig:
                     'network_specific': True
                 },
                 {
-                    'name': 'rrt_spatial_aware',
-                    'planner': 'rrt',
+                    'name': 'rs_spatial_aware',
+                    'planner': 'rs_curves',
                     'config': 'spatial_aware',
-                    'max_time': 15.0,
+                    'max_time': 13.0,
                     'priority': 2,
                     'network_specific': True
                 },
@@ -309,10 +350,10 @@ class IntegratedPlannerConfig:
                     'network_specific': False
                 },
                 {
-                    'name': 'rrt_standard_multi_stage',
-                    'planner': 'rrt',
+                    'name': 'rs_standard_multi_stage',
+                    'planner': 'rs_curves',
                     'config': 'standard_multi_stage',
-                    'max_time': 15.0,
+                    'max_time': 12.0,
                     'priority': 4,
                     'network_specific': False
                 },
@@ -325,11 +366,19 @@ class IntegratedPlannerConfig:
                     'network_specific': False
                 },
                 {
+                    'name': 'rs_aggressive_fallback',
+                    'planner': 'rs_curves',
+                    'config': 'aggressive_fallback',
+                    'max_time': 8.0,
+                    'priority': 6,
+                    'network_specific': False
+                },
+                {
                     'name': 'direct_fallback',
                     'planner': 'direct',
                     'config': None,
                     'max_time': 1.0,
-                    'priority': 6,
+                    'priority': 7,
                     'network_specific': False
                 }
             ]
@@ -340,26 +389,58 @@ class IntegratedPlannerConfig:
             TaskStageType.LOADING: {
                 'quality_threshold_boost': 0.1,
                 'safety_margin_multiplier': 1.3,
-                'preferred_planners': ['hybrid_astar'],
+                'preferred_planners': ['hybrid_astar', 'rs_curves'],
                 'timeout_extension': 1.2
             },
             TaskStageType.TRANSPORT: {
                 'quality_threshold_boost': 0.0,
                 'safety_margin_multiplier': 1.0,
-                'preferred_planners': ['hybrid_astar', 'rrt'],
+                'preferred_planners': ['hybrid_astar', 'rs_curves'],
                 'timeout_extension': 1.0
             },
             TaskStageType.UNLOADING: {
                 'quality_threshold_boost': 0.08,
                 'safety_margin_multiplier': 1.2,
-                'preferred_planners': ['hybrid_astar'],
+                'preferred_planners': ['hybrid_astar', 'rs_curves'],
                 'timeout_extension': 1.15
             },
             TaskStageType.PARKING: {
                 'quality_threshold_boost': -0.05,
                 'safety_margin_multiplier': 0.9,
-                'preferred_planners': ['rrt'],
+                'preferred_planners': ['rs_curves'],
                 'timeout_extension': 0.8
+            }
+        }
+        self.professional_road_config = {
+            'enable_road_class_awareness': True,
+            'prefer_higher_class_roads': True,
+            'engineering_standards_compliance': True,
+            'safety_rating_weight': 0.25,
+            'construction_cost_awareness': True,
+        }
+        
+        # 道路等级感知的规划参数调整
+        self.road_class_adjustments = {
+            'primary': {
+                'quality_threshold_boost': 0.15,
+                'safety_margin_multiplier': 1.1,
+                'preferred_planners': ['hybrid_astar'],
+                'timeout_extension': 1.3,
+                'priority_bonus': 0.2
+            },
+            'secondary': {
+                'quality_threshold_boost': 0.08,
+                'safety_margin_multiplier': 1.0,
+                'preferred_planners': ['hybrid_astar', 'rs_curves'],
+                'timeout_extension': 1.0,
+                'priority_bonus': 0.1
+            },
+            'service': {
+                'quality_threshold_boost': 0.0,
+                'safety_margin_multiplier': 0.9,
+                'preferred_planners': ['rs_curves'],
+                'timeout_extension': 0.8,
+                'priority_bonus': 0.0
             }
         }
     
@@ -414,10 +495,10 @@ class IntegratedPlannerConfig:
         
         return base_config
     
-    def get_rrt_config(self, level: str = 'standard_multi_stage',
-                      task_context: Dict = None) -> Dict[str, Any]:
-        """获取任务感知的RRT配置"""
-        base_config = self.rrt_configs.get(level, self.rrt_configs['standard_multi_stage']).copy()
+    def get_rs_curve_config(self, level: str = 'standard_multi_stage',
+                           task_context: Dict = None) -> Dict[str, Any]:
+        """获取任务感知的RS曲线配置"""
+        base_config = self.rs_curve_configs.get(level, self.rs_curve_configs['standard_multi_stage']).copy()
         
         # 任务阶段调整
         if task_context and 'current_stage' in task_context:
@@ -433,6 +514,11 @@ class IntegratedPlannerConfig:
                                    network_info: Dict = None, 
                                    task_info: Dict = None) -> Dict[str, Any]:
         """根据上下文获取优化配置"""
+        # 向后兼容：RRT重定向到RS曲线
+        if planner_type == 'rrt':
+            planner_type = 'rs_curves'
+            print(f"配置获取：RRT重定向到RS曲线")
+        
         if context == 'backbone':
             # 骨干路径生成：高质量要求，网络感知
             if planner_type == 'hybrid_astar':
@@ -450,11 +536,12 @@ class IntegratedPlannerConfig:
                 })
                 return config
                 
-            elif planner_type == 'rrt':
-                config = self.get_rrt_config('spatial_aware', task_info)
+            elif planner_type == 'rs_curves':
+                config = self.get_rs_curve_config('spatial_aware', task_info)
                 config.update({
-                    'max_nodes': min(config.get('max_nodes', 6000), 8000),
-                    'enable_dynamics_optimization': True
+                    'max_curve_attempts': min(config.get('max_curve_attempts', 6), 8),
+                    'enable_obstacle_avoidance': True,
+                    'precision_mode': True
                 })
                 return config
         
@@ -472,8 +559,8 @@ class IntegratedPlannerConfig:
                 })
                 return config
                 
-            elif planner_type == 'rrt':
-                config = self.get_rrt_config('standard_multi_stage', task_info)
+            elif planner_type == 'rs_curves':
+                config = self.get_rs_curve_config('standard_multi_stage', task_info)
                 return config
         
         elif context == 'emergency':
@@ -487,19 +574,20 @@ class IntegratedPlannerConfig:
                 })
                 return config
                 
-            elif planner_type == 'rrt':
-                config = self.get_rrt_config('fast_consolidated', task_info)
+            elif planner_type == 'rs_curves':
+                config = self.get_rs_curve_config('aggressive_fallback', task_info)
                 config.update({
-                    'max_nodes': min(config.get('max_nodes', 4000), 2000),
-                    'enable_dynamics_optimization': False
+                    'max_curve_attempts': min(config.get('max_curve_attempts', 2), 1),
+                    'enable_obstacle_avoidance': False,
+                    'aggressive_mode': True
                 })
                 return config
         
-        # 默认配置
+        # 默认配置 - 向后兼容处理
         if planner_type == 'hybrid_astar':
             return self.get_astar_config('standard_consolidated', network_info)
-        elif planner_type == 'rrt':
-            return self.get_rrt_config('standard_multi_stage', task_info)
+        elif planner_type == 'rs_curves':
+            return self.get_rs_curve_config('standard_multi_stage', task_info)
         
         return {}
     
@@ -523,10 +611,12 @@ class IntegratedPlannerConfig:
             fallback_sequence = [s for s in fallback_sequence if s['priority'] <= 4]
             
         elif context == 'emergency':
-            # 紧急情况：快速回退序列
+            # 紧急情况：快速回退序列，优先RS曲线
             emergency_sequence = []
             for strategy in fallback_sequence:
-                if 'emergency' in strategy['name'] or strategy['planner'] == 'rrt':
+                if ('emergency' in strategy['name'] or 
+                    strategy['planner'] == 'rs_curves' or
+                    'aggressive' in strategy['name']):
                     emergency_sequence.append(strategy)
                 if len(emergency_sequence) >= 3:
                     break
@@ -540,13 +630,14 @@ class IntegratedPlannerConfig:
             fallback_sequence = emergency_sequence
             
         elif context == 'multi_stage':
-            # 多阶段任务：优先多阶段感知策略
+            # 多阶段任务：优先多阶段感知策略，RS曲线很适合
             multi_stage_sequence = []
             for strategy in fallback_sequence:
                 config_name = strategy.get('config', '')
                 if ('multi_stage' in config_name or 
                     'consolidated' in config_name or 
-                    'hierarchical' in config_name):
+                    'hierarchical' in config_name or
+                    strategy['planner'] == 'rs_curves'):
                     multi_stage_sequence.append(strategy)
             
             # 补充其他策略
@@ -630,15 +721,15 @@ class IntegratedPlannerConfig:
         if 'timeout_extension' in adjustments and 'timeout' in stage_config:
             stage_config['timeout'] *= adjustments['timeout_extension']
         
-        # 多阶段特殊配置
+        # 多阶段特殊配置 - RS曲线优化
         if self.multi_stage_config.stage_aware_planning:
-            if 'stage_aware_sampling' not in stage_config:
-                stage_config['stage_aware_sampling'] = True
+            if 'stage_aware_curves' not in stage_config:
+                stage_config['stage_aware_curves'] = True
             
             if stage_type in [TaskStageType.LOADING, TaskStageType.UNLOADING]:
                 stage_config['precision_mode'] = True
-                if 'goal_bias' in stage_config:
-                    stage_config['goal_bias'] *= 1.2  # 增强目标导向
+                if 'smoothness_preference' in stage_config:
+                    stage_config['smoothness_preference'] *= 1.1  # 增强平滑性
         
         return stage_config
     
@@ -651,12 +742,12 @@ class IntegratedPlannerConfig:
             consolidation_config['trunk_path_bonus'] = 0.1
         
         if 'consolidation_aware' in config and config['consolidation_aware']:
-            # 适应整理后的路径结构
+            # 适应整理后的路径结构 - RS曲线调整
             if 'step_size' in consolidation_config:
                 consolidation_config['step_size'] *= 1.05  # 稍大的步长适应整理路径
             
-            if 'max_nodes' in consolidation_config:
-                consolidation_config['max_nodes'] = int(consolidation_config['max_nodes'] * 0.9)  # 减少节点数
+            if 'max_curve_attempts' in consolidation_config:
+                consolidation_config['max_curve_attempts'] = max(2, consolidation_config['max_curve_attempts'] - 1)  # 减少尝试次数
         
         return consolidation_config
     
@@ -678,8 +769,10 @@ class IntegratedPlannerConfig:
                 optimized_strategy['max_time'] *= 1.1
             
             if has_spatial_conflicts:
-                # 空间冲突网络需要更精细的规划
-                if 'astar' in optimized_strategy['name']:
+                # 空间冲突网络需要更精细的规划，RS曲线很适合
+                if 'rs_curves' in optimized_strategy['name']:
+                    optimized_strategy['max_time'] *= 1.2  # RS曲线获得更多时间
+                elif 'astar' in optimized_strategy['name']:
                     optimized_strategy['max_time'] *= 1.15
             
             if alternative_paths_count < 2:
@@ -703,10 +796,10 @@ class IntegratedPlannerConfig:
             config['next_stage'] = next_stage
             config['cross_stage_optimization'] = self.multi_stage_config.inter_stage_optimization
             
-            # 阶段间优化参数
+            # 阶段间优化参数 - RS曲线优化
             if current_stage == 'loading' and next_stage == 'transport':
                 config['loading_to_transport_optimization'] = True
-                config['quality_continuity_weight'] = 0.2
+                config['curve_continuity_weight'] = 0.3  # RS曲线连续性
             elif current_stage == 'transport' and next_stage == 'unloading':
                 config['transport_to_unloading_optimization'] = True
                 config['precision_approach_planning'] = True
@@ -723,7 +816,7 @@ class IntegratedPlannerConfig:
         logical_conflicts = conflict_info.get('logical_conflicts_detected', 0)
         
         if spatial_conflicts > logical_conflicts * 0.5:
-            # 空间冲突较多，提升空间感知
+            # 空间冲突较多，提升空间感知，RS曲线很适合处理空间冲突
             self.conflict_aware_config.awareness_level = ConflictAwarenessLevel.SPATIAL_AWARE
             self.conflict_aware_config.spatial_detection_enabled = True
             self.conflict_aware_config.safety_margin_multiplier = 1.3
@@ -778,6 +871,7 @@ class IntegratedPathPlannerWithOptimizedConfig:
             'spatial_conflict_aware_plans': 0,
             'multi_stage_optimized_plans': 0,
             'hierarchy_aware_plans': 0,
+            'rs_curve_plans': 0,  # 新增RS曲线统计
             
             # 配置优化统计
             'config_adaptations': 0,
@@ -789,6 +883,7 @@ class IntegratedPathPlannerWithOptimizedConfig:
         print(f"  网络整理感知: {'✅' if CONSOLIDATION_AVAILABLE else '❌'}")
         print(f"  多阶段任务感知: ✅")
         print(f"  空间冲突感知: ✅")
+        print(f"  RS曲线规划器: {'✅' if RS_CURVES_AVAILABLE else '❌'}")
     
     def _initialize_planners_with_integrated_config(self):
         """使用集成优化配置初始化规划器"""
@@ -810,22 +905,72 @@ class IntegratedPathPlannerWithOptimizedConfig:
         except ImportError:
             print("⚠️ 混合A*规划器不可用")
         
-        try:
-            # 初始化RRT
-            from RRT import SimplifiedRRTPlanner
-            rrt_config = self.config_manager.get_rrt_config('standard_multi_stage')
-            
-            self.planners['rrt'] = SimplifiedRRTPlanner(
-                self.env,
-                vehicle_length=rrt_config['vehicle_length'],
-                vehicle_width=rrt_config['vehicle_width'],
-                turning_radius=rrt_config['turning_radius'],
-                step_size=rrt_config['step_size']
-            )
-            print("✅ 多阶段感知RRT规划器初始化完成")
-        
-        except ImportError:
-            print("⚠️ RRT规划器不可用")
+        # 初始化RS曲线规划器并添加兼容性包装
+        if RS_CURVES_AVAILABLE:
+            try:
+                rs_config = self.config_manager.get_rs_curve_config('standard_multi_stage')
+                base_rs_planner = MiningOptimizedReedShepp(
+                    turning_radius=rs_config['turning_radius'],
+                    step_size=rs_config['step_size']
+                )
+                
+                # 创建兼容性包装器
+                class RSPlannerWrapper:
+                    def __init__(self, rs_planner, env):
+                        self.rs_planner = rs_planner
+                        self.env = env
+                    
+                    def plan_path(self, start, goal, **kwargs):
+                        """兼容RRT接口的plan_path方法"""
+                        try:
+                            # 确保起点和终点有朝向信息
+                            start_with_heading = self._ensure_heading(start, goal)
+                            goal_with_heading = self._ensure_heading(goal, start)
+                            
+                            # 获取步长，优先使用传入参数
+                            step_size = kwargs.get('step_size', self.rs_planner.step_size)
+                            
+                            # 调用RS曲线生成
+                            path = self.rs_planner.get_path(start_with_heading, goal_with_heading, step_size)
+                            
+                            if path and len(path) >= 2:
+                                print(f"      RS曲线包装器成功生成路径: {len(path)}点")
+                                return path
+                            else:
+                                print(f"      RS曲线包装器生成路径失败")
+                                return None
+                        
+                        except Exception as e:
+                            print(f"      RS曲线包装器异常: {e}")
+                            return None
+                    
+                    def _ensure_heading(self, point, reference_point):
+                        """确保点包含朝向信息"""
+                        if len(point) >= 3:
+                            return point
+                        
+                        dx = reference_point[0] - point[0]
+                        dy = reference_point[1] - point[1]
+                        heading = math.atan2(dy, dx)
+                        return (point[0], point[1], heading)
+                    
+                    def get_path(self, start, goal, step_size=None):
+                        """原始RS曲线接口"""
+                        if step_size is None:
+                            step_size = self.rs_planner.step_size
+                        return self.rs_planner.get_path(start, goal, step_size)
+                
+                # 使用包装器
+                self.planners['rs_curves'] = RSPlannerWrapper(base_rs_planner, self.env)
+                
+                # 向后兼容：RRT键名指向同一个规划器
+                self.planners['rrt'] = self.planners['rs_curves']
+                
+                print("✅ 多阶段感知RS曲线规划器初始化完成（含RRT兼容性）")
+            except Exception as e:
+                print(f"⚠️ RS曲线规划器初始化失败: {e}")
+        else:
+            print("⚠️ RS曲线规划器不可用")
     
     def update_network_topology_awareness(self):
         """更新网络拓扑感知"""
@@ -958,8 +1103,8 @@ class IntegratedPathPlannerWithOptimizedConfig:
             if config_level:
                 if planner_type == 'hybrid_astar':
                     strategy_config = self.config_manager.get_astar_config(config_level, network_context)
-                elif planner_type == 'rrt':
-                    strategy_config = self.config_manager.get_rrt_config(config_level, task_context)
+                elif planner_type == 'rs_curves':
+                    strategy_config = self.config_manager.get_rs_curve_config(config_level, task_context)
                 else:
                     strategy_config = {}
             else:
@@ -1016,8 +1161,11 @@ class IntegratedPathPlannerWithOptimizedConfig:
                     vehicle_id, start, goal, config, max_time, network_context
                 )
             
-            elif planner_type == 'rrt' and 'rrt' in self.planners:
-                return self._plan_with_integrated_rrt(
+            elif (planner_type in ['rs_curves', 'rrt'] and 'rs_curves' in self.planners):
+                # 向后兼容：RRT调用重定向到RS曲线
+                if planner_type == 'rrt':
+                    print(f"      RRT调用重定向到RS曲线规划器")
+                return self._plan_with_integrated_rs_curves(
                     vehicle_id, start, goal, config, max_time, task_context
                 )
             
@@ -1073,40 +1221,150 @@ class IntegratedPathPlannerWithOptimizedConfig:
         
         return None
     
-    def _plan_with_integrated_rrt(self, vehicle_id: str, start: tuple, goal: tuple,
-                                 config: dict, max_time: float, task_context: Dict = None):
-        """使用集成优化的RRT规划"""
-        planner = self.planners['rrt']
+    def _plan_with_integrated_rs_curves(self, vehicle_id: str, start: tuple, goal: tuple,
+                                       config: dict, max_time: float, task_context: Dict = None):
+        """使用集成优化的RS曲线规划"""
+        rs_planner = self.planners['rs_curves']
+        
+        # 确保起点和终点包含朝向信息
+        start_with_heading = self._ensure_heading_for_rs(start, goal)
+        goal_with_heading = self._ensure_heading_for_rs(goal, start)
         
         # 任务阶段感知的规划参数
-        planning_params = {
-            'agent_id': vehicle_id,
-            'max_iterations': config.get('max_nodes', 6000),
-            'quality_threshold': config.get('quality_threshold', 0.5),
-            'enable_dynamics_optimization': config.get('enable_dynamics_optimization', True)
-        }
+        step_size = config.get('step_size', 0.8)
+        max_attempts = config.get('max_curve_attempts', 5)
+        quality_threshold = config.get('quality_threshold', 0.6)
         
         # 多阶段任务特殊处理
         if (task_context and task_context.get('multi_stage', False) and
-            config.get('stage_aware_sampling', False)):
-            planning_params['stage_aware_mode'] = True
-            planning_params['current_stage'] = task_context.get('current_stage', 'transport')
+            config.get('stage_aware_curves', False)):
+            current_stage = task_context.get('current_stage', 'transport')
+            
+            # 根据阶段调整参数
+            if current_stage in ['loading', 'unloading']:
+                step_size *= 0.8  # 更精细的步长
+                max_attempts += 2  # 更多尝试次数
+            elif current_stage == 'parking':
+                step_size *= 1.2  # 稍大的步长，更快速
+            
             self.stats['multi_stage_optimized_plans'] += 1
         
-        # 整理网络感知
-        if (config.get('consolidation_aware', False) and 
-            config.get('prefer_trunk_paths', False)):
-            planning_params['trunk_path_preference'] = True
-            self.stats['consolidation_aware_plans'] += 1
+        # 空间冲突感知调整
+        if config.get('spatial_conflict_avoidance', False):
+            step_size *= 0.9  # 更密集的采样
+            max_attempts += 1
+            self.stats['spatial_conflict_aware_plans'] += 1
         
-        path = planner.plan_path(start, goal, **planning_params)
+        # 尝试多次生成RS曲线路径
+        best_path = None
+        best_quality = 0.0
         
-        if path:
+        for attempt in range(max_attempts):
+            try:
+                # 调整转弯半径以获得不同的曲线
+                adjusted_radius = config['turning_radius'] * (0.8 + 0.4 * attempt / max_attempts)
+                rs_planner.turning_radius = adjusted_radius
+                
+                path = rs_planner.get_path(start_with_heading, goal_with_heading, step_size)
+                
+                if path and len(path) >= 2:
+                    # 检查路径质量
+                    path_quality = self._evaluate_rs_path_quality(path, config)
+                    
+                    if path_quality >= quality_threshold and path_quality > best_quality:
+                        best_path = path
+                        best_quality = path_quality
+                        
+                        # 如果质量足够好，提前返回
+                        if path_quality > 0.8:
+                            break
+            
+            except Exception as e:
+                print(f"      RS曲线尝试 {attempt+1} 失败: {e}")
+                continue
+        
+        if best_path:
+            self.stats['rs_curve_plans'] += 1
             return self._create_enhanced_result_object(
-                path, 'integrated_rrt', len(path), task_context=task_context
+                best_path, 'integrated_rs_curves', len(best_path), task_context=task_context
             )
         
         return None
+    
+    def _ensure_heading_for_rs(self, point: tuple, reference_point: tuple) -> tuple:
+        """为RS曲线确保朝向信息"""
+        if len(point) >= 3:
+            return point
+        
+        # 计算朝向reference_point的角度
+        dx = reference_point[0] - point[0]
+        dy = reference_point[1] - point[1]
+        heading = math.atan2(dy, dx)
+        
+        return (point[0], point[1], heading)
+    
+    def _evaluate_rs_path_quality(self, path: List[Tuple], config: Dict) -> float:
+        """评估RS曲线路径质量"""
+        if not path or len(path) < 2:
+            return 0.0
+        
+        # 计算路径长度
+        path_length = sum(
+            math.sqrt((path[i+1][0] - path[i][0])**2 + (path[i+1][1] - path[i][1])**2)
+            for i in range(len(path) - 1)
+        )
+        
+        # 直线距离
+        direct_distance = math.sqrt(
+            (path[-1][0] - path[0][0])**2 + (path[-1][1] - path[0][1])**2
+        )
+        
+        # 长度效率
+        length_efficiency = direct_distance / (path_length + 0.1) if path_length > 0 else 0
+        
+        # 平滑度（曲率变化）
+        smoothness = self._calculate_rs_path_smoothness(path)
+        
+        # 复杂度检查
+        complexity_factor = 1.0
+        if path_length > direct_distance * config.get('curve_complexity_limit', 3.0):
+            complexity_factor = 0.5  # 过于复杂的路径降低质量
+        
+        # 整理网络加成
+        consolidation_bonus = 0.0
+        if config.get('consolidation_aware', False):
+            consolidation_bonus = 0.1
+        
+        # 综合质量分数
+        quality = (length_efficiency * 0.4 + 
+                  smoothness * 0.4 + 
+                  config.get('smoothness_preference', 0.8) * 0.2) * complexity_factor + consolidation_bonus
+        
+        return min(1.0, max(0.0, quality))
+    
+    def _calculate_rs_path_smoothness(self, path: List[Tuple]) -> float:
+        """计算RS曲线路径平滑度"""
+        if len(path) < 3:
+            return 1.0
+        
+        total_angle_change = 0
+        for i in range(1, len(path) - 1):
+            # 计算转向角变化
+            v1 = (path[i][0] - path[i-1][0], path[i][1] - path[i-1][1])
+            v2 = (path[i+1][0] - path[i][0], path[i+1][1] - path[i][1])
+            
+            len1 = math.sqrt(v1[0]**2 + v1[1]**2)
+            len2 = math.sqrt(v2[0]**2 + v2[1]**2)
+            
+            if len1 > 1e-6 and len2 > 1e-6:
+                cos_angle = (v1[0]*v2[0] + v1[1]*v2[1]) / (len1 * len2)
+                cos_angle = max(-1, min(1, cos_angle))
+                angle_change = math.acos(cos_angle)
+                total_angle_change += angle_change
+        
+        avg_angle_change = total_angle_change / max(1, len(path) - 2)
+        # RS曲线天然比较平滑，使用更宽松的评估
+        return math.exp(-avg_angle_change * 0.8)
     
     def _plan_direct_path_enhanced(self, start: tuple, goal: tuple, network_context: Dict = None):
         """增强的直线路径回退"""
@@ -1151,7 +1409,8 @@ class IntegratedPathPlannerWithOptimizedConfig:
                     'network_topology': network_context.get('topology_type') if network_context else 'original',
                     'consolidation_aware': network_context.get('is_consolidated', False) if network_context else False,
                     'multi_stage_optimized': task_context.get('multi_stage', False) if task_context else False,
-                    'spatial_conflict_aware': network_context.get('spatial_conflicts_detected', False) if network_context else False
+                    'spatial_conflict_aware': network_context.get('spatial_conflicts_detected', False) if network_context else False,
+                    'rs_curve_used': 'rs_curves' in planner_used  # 新增RS曲线标识
                 }
                 
                 # 任务阶段信息
@@ -1165,7 +1424,7 @@ class IntegratedPathPlannerWithOptimizedConfig:
                 """计算集成质量分数"""
                 base_scores = {
                     'integrated_hybrid_astar': 0.85,
-                    'integrated_rrt': 0.75,
+                    'integrated_rs_curves': 0.80,  # RS曲线基础分数
                     'enhanced_direct': 0.5,
                     'backbone_network': 0.9
                 }
@@ -1178,6 +1437,11 @@ class IntegratedPathPlannerWithOptimizedConfig:
                 
                 if network_context and network_context.get('hierarchy_level') == 'trunk':
                     base_score += 0.03  # 主干路径加成
+                
+                # RS曲线特殊加成
+                if 'rs_curves' in planner_used:
+                    if network_context and network_context.get('spatial_conflicts_detected', False):
+                        base_score += 0.08  # RS曲线处理空间冲突有优势
                 
                 return min(1.0, base_score)
         
@@ -1258,6 +1522,7 @@ class IntegratedPathPlannerWithOptimizedConfig:
             'spatial_conflict_aware_plans': self.stats['spatial_conflict_aware_plans'],
             'multi_stage_optimized_plans': self.stats['multi_stage_optimized_plans'],
             'hierarchy_aware_plans': self.stats['hierarchy_aware_plans'],
+            'rs_curve_plans': self.stats['rs_curve_plans'],  # RS曲线统计
             'config_adaptations': self.stats['config_adaptations'],
             'current_network_topology': self.current_network_topology.value
         })
@@ -1315,51 +1580,87 @@ class IntegratedPathPlannerWithOptimizedConfig:
         
         self.planners.clear()
         print("集成优化路径规划器已关闭")
+    def get_professional_road_aware_config(self, road_class: str = 'secondary',
+                                        engineering_context: Dict = None) -> Dict[str, Any]:
+        """获取专业道路感知的配置"""
+        base_config = self.get_astar_config('standard_consolidated')
+        
+        # 应用道路等级调整
+        if road_class in self.road_class_adjustments:
+            adjustments = self.road_class_adjustments[road_class]
+            
+            # 质量阈值调整
+            quality_boost = adjustments.get('quality_threshold_boost', 0.0)
+            base_config['quality_threshold'] = base_config.get('quality_threshold', 0.6) + quality_boost
+            
+            # 安全边距调整
+            safety_multiplier = adjustments.get('safety_margin_multiplier', 1.0)
+            base_config['turning_radius'] = base_config.get('turning_radius', 8.0) * safety_multiplier
+            
+            # 超时调整
+            timeout_extension = adjustments.get('timeout_extension', 1.0)
+            base_config['timeout'] = base_config.get('timeout', 18.0) * timeout_extension
+            
+            # 专业道路标记
+            base_config['road_class_aware'] = True
+            base_config['target_road_class'] = road_class
+            base_config['engineering_optimized'] = True
+        
+        # 工程上下文调整
+        if engineering_context:
+            if engineering_context.get('high_safety_required', False):
+                base_config['quality_threshold'] *= 1.1
+                base_config['turning_radius'] *= 1.2
+            
+            if engineering_context.get('cost_sensitive', False):
+                base_config['max_iterations'] = int(base_config.get('max_iterations', 20000) * 0.8)
+                base_config['timeout'] *= 0.9
+        
+        return base_config
 
+    # ==================== 便捷创建函数 ====================
 
-# ==================== 便捷创建函数 ====================
-
-def create_integrated_planning_system(env, backbone_network=None, traffic_manager=None):
-    """创建集成规划系统"""
-    config_manager = IntegratedPlannerConfig()
-    planner = IntegratedPathPlannerWithOptimizedConfig(env, backbone_network, traffic_manager)
-    
-    return {
-        'config_manager': config_manager,
-        'planner': planner
-    }
-
-def apply_network_optimization_preset(config_manager: IntegratedPlannerConfig, preset: str = 'balanced'):
-    """应用网络优化预设"""
-    presets = {
-        'performance': {
-            'max_planning_time': 20.0,
-            'quality_threshold': 0.5,
-            'alternative_path_exploration_depth': 2,
-            'safety_margin_multiplier': 1.1
-        },
-        'balanced': {
-            'max_planning_time': 25.0,
-            'quality_threshold': 0.55,
-            'alternative_path_exploration_depth': 3,
-            'safety_margin_multiplier': 1.2
-        },
-        'quality': {
-            'max_planning_time': 30.0,
-            'quality_threshold': 0.65,
-            'alternative_path_exploration_depth': 4,
-            'safety_margin_multiplier': 1.3
+    def create_integrated_planning_system(env, backbone_network=None, traffic_manager=None):
+        """创建集成规划系统"""
+        config_manager = IntegratedPlannerConfig()
+        planner = IntegratedPathPlannerWithOptimizedConfig(env, backbone_network, traffic_manager)
+        
+        return {
+            'config_manager': config_manager,
+            'planner': planner
         }
-    }
-    
-    if preset in presets:
-        preset_config = presets[preset]
-        config_manager.base_config.update(preset_config)
-        config_manager.network_aware_config.alternative_path_exploration_depth = preset_config['alternative_path_exploration_depth']
-        config_manager.conflict_aware_config.safety_margin_multiplier = preset_config['safety_margin_multiplier']
-        print(f"✅ 已应用网络优化预设: {preset}")
-    else:
-        print(f"❌ 未知预设: {preset}")
+
+    def apply_network_optimization_preset(config_manager: IntegratedPlannerConfig, preset: str = 'balanced'):
+        """应用网络优化预设"""
+        presets = {
+            'performance': {
+                'max_planning_time': 20.0,
+                'quality_threshold': 0.5,
+                'alternative_path_exploration_depth': 2,
+                'safety_margin_multiplier': 1.1
+            },
+            'balanced': {
+                'max_planning_time': 25.0,
+                'quality_threshold': 0.55,
+                'alternative_path_exploration_depth': 3,
+                'safety_margin_multiplier': 1.2
+            },
+            'quality': {
+                'max_planning_time': 30.0,
+                'quality_threshold': 0.65,
+                'alternative_path_exploration_depth': 4,
+                'safety_margin_multiplier': 1.3
+            }
+        }
+        
+        if preset in presets:
+            preset_config = presets[preset]
+            config_manager.base_config.update(preset_config)
+            config_manager.network_aware_config.alternative_path_exploration_depth = preset_config['alternative_path_exploration_depth']
+            config_manager.conflict_aware_config.safety_margin_multiplier = preset_config['safety_margin_multiplier']
+            print(f"✅ 已应用网络优化预设: {preset}")
+        else:
+            print(f"❌ 未知预设: {preset}")
 
 
 # 兼容性别名
