@@ -24,6 +24,10 @@ except ImportError as e:
     PROFESSIONAL_CONSOLIDATION_AVAILABLE = False
     print(f"⚠️ 专业道路整合模块不可用: {e}")
 
+# 手动禁用专业道路整合功能
+# PROFESSIONAL_CONSOLIDATION_AVAILABLE = False
+# print("⚠️ 专业道路整合模块已手动禁用")
+
 @dataclass
 class BiDirectionalPath:
     """双向路径数据结构 - 基于节点聚类的专业设计增强版"""

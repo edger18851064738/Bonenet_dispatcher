@@ -1,853 +1,2306 @@
+#!/usr/bin/env python3
 """
-improved_backbone_network_consolidation.py - 继承式节点整合系统
-通过节点继承实现跨路径关键节点整合
+enhanced_integrated_gui.py - 修复版：集成冲突控制系统的专业GUI
+修复问题：
+1. 任务归属验证错误
+2. 车辆位置更新逻辑
+3. 冲突检测失效
+4. 多车共享任务问题
 """
+
+import sys
+import os
 import math
 import time
+import json
+from typing import Dict, List, Tuple, Optional
 import random
-from collections import defaultdict, OrderedDict
-from typing import Dict, List, Tuple, Optional, Any
-from dataclasses import dataclass, field
-import threading
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QPropertyAnimation, QEasingCurve, QPointF, pyqtProperty
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+    QPushButton, QLabel, QComboBox, QSpinBox, QDoubleSpinBox,
+    QProgressBar, QTextEdit, QFileDialog, QMessageBox, QSplitter,
+    QGroupBox, QGridLayout, QTableWidget, QTableWidgetItem,
+    QGraphicsScene, QGraphicsView, QGraphicsEllipseItem, QDockWidget,
+    QGraphicsRectItem, QGraphicsPathItem, QTabWidget, QFrame,
+    QSlider, QCheckBox, QLCDNumber, QScrollArea, QTreeWidget, QTreeWidgetItem,
+    QListWidget, QGraphicsItemGroup, QGraphicsPolygonItem, QGraphicsLineItem,
+    QGraphicsTextItem, QAction, QToolBar, QMenuBar, QMenu, QStatusBar, QDial
+)
+from PyQt5.QtGui import (
+    QPen, QBrush, QColor, QPainter, QPainterPath, QFont, QPixmap, QIcon,
+    QLinearGradient, QRadialGradient, QPolygonF, QTransform
+)
+
+# 导入系统组件
 try:
-    from scipy.interpolate import CubicSpline
-    SCIPY_AVAILABLE = True
-except ImportError:
-    SCIPY_AVAILABLE = False
+    from optimized_backbone_network import OptimizedBackboneNetwork
+    from optimized_planner_config import EnhancedPathPlannerWithConfig
+    from conflict_control import EnhancedBackboneConflictDetector
+    from traffic_manager import EnhancedBackboneTrafficManager
+    from vehicle_scheduler import (
+        EnhancedBackboneVehicleScheduler, 
+        TaskPriority, 
+        TaskStatus, 
+        VehicleStatus
+    )
+    ENHANCED_COMPONENTS_AVAILABLE = True
+    print("✅ 增强冲突控制组件加载成功")
+except ImportError as e:
+    print(f"⚠️ 增强组件不可用: {e}")
+    ENHANCED_COMPONENTS_AVAILABLE = False
+    sys.exit(1)
 
-@dataclass
-class NodePathMembership:
-    """节点路径归属"""
-    path_id: str
-    node_index: int
-    position: Tuple[float, float, float]
+from environment import OptimizedOpenPitMineEnv
 
-@dataclass
-class InheritedNode:
-    """继承节点"""
-    node_id: str
-    position: Tuple[float, float, float]
-    memberships: List[NodePathMembership] = field(default_factory=list)
-    original_nodes: List[Tuple[float, float, float]] = field(default_factory=list)
-    
-    def add_membership(self, path_id: str, node_index: int, position: Tuple):
-        """添加路径归属"""
-        self.memberships.append(NodePathMembership(path_id, node_index, position))
-        self.original_nodes.append(position)
-    
-    def get_path_count(self) -> int:
-        """获取路径数量"""
-        return len(set(m.path_id for m in self.memberships))
+# 专业配色方案
+PROFESSIONAL_COLORS = {
+    'background': QColor(45, 47, 57),
+    'surface': QColor(55, 58, 71),
+    'primary': QColor(66, 135, 245),
+    'secondary': QColor(156, 163, 175),
+    'success': QColor(16, 185, 129),
+    'warning': QColor(245, 158, 11),
+    'error': QColor(239, 68, 68),
+    'text': QColor(229, 231, 235),
+    'text_muted': QColor(156, 163, 175),
+    'border': QColor(75, 85, 99)
+}
 
-class NodeInheritanceDetector:
-    """节点继承检测器"""
+# 车辆状态配色
+VEHICLE_STATUS_COLORS = {
+    'idle': QColor(156, 163, 175),
+    'loading': QColor(16, 185, 129),
+    'unloading': QColor(245, 158, 11),
+    'moving': QColor(66, 135, 245),
+    'waiting': QColor(168, 85, 247),
+    'planning': QColor(244, 63, 94),
+    'maintenance': QColor(239, 68, 68),
+    'conflict_resolving': QColor(255, 99, 71)
+}
+
+class ConflictControlWidget(QWidget):
+    """冲突控制组件"""
     
-    def __init__(self, merge_radius=3.5):
-        self.merge_radius = merge_radius
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.conflict_detector = None
+        self.traffic_manager = None
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
         
-    def detect_mergeable_nodes(self, bidirectional_paths: Dict) -> List[List[NodePathMembership]]:
-        """检测可合并的节点组"""
-        print(f"\n🔍 [继承检测] 开始检测可合并节点，合并半径: {self.merge_radius}m")
+        # 标题
+        title = QLabel("冲突控制系统")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("""
+            QLabel {
+                font-size: 14px;
+                font-weight: bold;
+                color: rgb(229, 231, 235);
+                padding: 8px;
+                background-color: rgb(239, 68, 68);
+                border-radius: 4px;
+            }
+        """)
+        layout.addWidget(title)
         
-        # 1. 建立所有节点的路径归属映射
-        all_node_memberships = []
-        for path_id, path_data in bidirectional_paths.items():
-            for i, node in enumerate(path_data.forward_path):
-                membership = NodePathMembership(path_id, i, node)
-                all_node_memberships.append(membership)
+        # 冲突状态
+        status_group = QGroupBox("冲突状态")
+        status_layout = QVBoxLayout()
         
-        print(f"   总节点数: {len(all_node_memberships)}")
+        self.active_conflicts_label = QLabel("活跃冲突: 0")
+        self.resolved_conflicts_label = QLabel("已解决: 0")
+        self.success_rate_label = QLabel("解决率: 0%")
         
-        # 2. 检测距离冲突的节点组
-        mergeable_groups = []
-        processed_indices = set()
+        status_layout.addWidget(self.active_conflicts_label)
+        status_layout.addWidget(self.resolved_conflicts_label)
+        status_layout.addWidget(self.success_rate_label)
         
-        for i, membership in enumerate(all_node_memberships):
-            if i in processed_indices:
-                continue
-                
-            # 查找与当前节点距离小于阈值的所有节点
-            conflict_group = [membership]
-            conflict_indices = [i]
+        status_group.setLayout(status_layout)
+        layout.addWidget(status_group)
+        
+        # 解决策略统计
+        strategy_group = QGroupBox("解决策略")
+        strategy_layout = QVBoxLayout()
+        
+        self.first_come_count_label = QLabel("先到先行: 0")
+        self.priority_count_label = QLabel("优先级抢占: 0")
+        self.temporal_count_label = QLabel("时间调整: 0")
+        self.backbone_switch_label = QLabel("路径切换: 0")
+        
+        strategy_layout.addWidget(self.first_come_count_label)
+        strategy_layout.addWidget(self.priority_count_label)
+        strategy_layout.addWidget(self.temporal_count_label)
+        strategy_layout.addWidget(self.backbone_switch_label)
+        
+        strategy_group.setLayout(strategy_layout)
+        layout.addWidget(strategy_group)
+        
+        # 控制按钮
+        control_layout = QHBoxLayout()
+        
+        self.detect_conflicts_btn = QPushButton("检测冲突")
+        self.resolve_all_btn = QPushButton("解决全部")
+        self.emergency_clear_btn = QPushButton("紧急清除")
+        
+        self.emergency_clear_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgb(239, 68, 68);
+                color: white;
+            }
+        """)
+        
+        control_layout.addWidget(self.detect_conflicts_btn)
+        control_layout.addWidget(self.resolve_all_btn)
+        control_layout.addWidget(self.emergency_clear_btn)
+        
+        layout.addLayout(control_layout)
+        layout.addStretch()
+    
+    def set_components(self, conflict_detector, traffic_manager):
+        """设置组件引用"""
+        self.conflict_detector = conflict_detector
+        self.traffic_manager = traffic_manager
+    
+    def update_display(self):
+        """更新显示"""
+        if not self.conflict_detector or not self.traffic_manager:
+            return
+        
+        try:
+            # 获取冲突状态
+            active_conflicts = self.conflict_detector.get_active_conflicts()
+            system_status = self.traffic_manager.get_system_status()
             
-            for j, other_membership in enumerate(all_node_memberships):
-                if j <= i or j in processed_indices:
-                    continue
-                
-                # 检查是否来自不同路径
-                if membership.path_id == other_membership.path_id:
-                    continue
-                
-                distance = self._calculate_distance(membership.position, other_membership.position)
-                if distance <= self.merge_radius:
-                    conflict_group.append(other_membership)
-                    conflict_indices.append(j)
+            self.active_conflicts_label.setText(f"活跃冲突: {len(active_conflicts)}")
+            self.resolved_conflicts_label.setText(f"已解决: {system_status.get('conflicts_resolved', 0)}")
             
-            if len(conflict_group) > 1:  # 至少2个不同路径的节点
-                mergeable_groups.append(conflict_group)
-                processed_indices.update(conflict_indices)
-        
-        print(f"   检测到可合并组: {len(mergeable_groups)}")
-        for i, group in enumerate(mergeable_groups):
-            paths = set(m.path_id for m in group)
-            print(f"     组{i+1}: {len(group)}节点, 涉及路径: {list(paths)}")
-        
-        return mergeable_groups
-    
-    def _calculate_distance(self, pos1: Tuple, pos2: Tuple) -> float:
-        """计算两点距离"""
-        return math.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
+            success_rate = system_status.get('resolution_success_rate', 0) * 100
+            self.success_rate_label.setText(f"解决率: {success_rate:.1f}%")
+            
+            # 策略统计
+            perf_metrics = system_status.get('performance_metrics', {})
+            self.first_come_count_label.setText(f"先到先行: {perf_metrics.get('first_come_resolutions', 0)}")
+            self.priority_count_label.setText(f"优先级抢占: {perf_metrics.get('priority_resolutions', 0)}")
+            self.temporal_count_label.setText(f"时间调整: {perf_metrics.get('temporal_adjustments', 0)}")
+            self.backbone_switch_label.setText(f"路径切换: {perf_metrics.get('backbone_switches', 0)}")
+            
+        except Exception as e:
+            print(f"更新冲突控制显示失败: {e}")
 
-class NodeInheritanceProcessor:
-    """节点继承处理器"""
+class BatchTaskWidget(QWidget):
+    """批量任务控制组件"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.vehicle_scheduler = None
+        self.env = None
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        
+        # 标题
+        title = QLabel("批量任务分配")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("""
+            QLabel {
+                font-size: 14px;
+                font-weight: bold;
+                color: rgb(229, 231, 235);
+                padding: 8px;
+                background-color: rgb(16, 185, 129);
+                border-radius: 4px;
+            }
+        """)
+        layout.addWidget(title)
+        
+        # 任务配置
+        config_group = QGroupBox("任务配置")
+        config_layout = QGridLayout()
+        
+        config_layout.addWidget(QLabel("车辆数量:"), 0, 0)
+        self.vehicle_count_spin = QSpinBox()
+        self.vehicle_count_spin.setRange(1, 50)
+        self.vehicle_count_spin.setValue(5)
+        config_layout.addWidget(self.vehicle_count_spin, 0, 1)
+        
+        config_layout.addWidget(QLabel("任务优先级:"), 1, 0)
+        self.priority_combo = QComboBox()
+        self.priority_combo.addItems(["低", "普通", "高", "紧急", "关键"])
+        self.priority_combo.setCurrentIndex(1)
+        config_layout.addWidget(self.priority_combo, 1, 1)
+        
+        config_layout.addWidget(QLabel("任务模式:"), 2, 0)
+        self.task_mode_combo = QComboBox()
+        self.task_mode_combo.addItems([
+            "装载→卸载→停车",
+            "装载→卸载",
+            "随机循环",
+            "只装载",
+            "只卸载"
+        ])
+        config_layout.addWidget(self.task_mode_combo, 2, 1)
+        
+        config_group.setLayout(config_layout)
+        layout.addWidget(config_group)
+        
+        # 批量操作按钮
+        batch_layout = QVBoxLayout()
+        
+        self.create_batch_btn = QPushButton("创建批量任务")
+        self.assign_all_btn = QPushButton("分配所有任务")
+        self.clear_tasks_btn = QPushButton("清除所有任务")
+        
+        batch_layout.addWidget(self.create_batch_btn)
+        batch_layout.addWidget(self.assign_all_btn)
+        batch_layout.addWidget(self.clear_tasks_btn)
+        
+        layout.addLayout(batch_layout)
+        
+        # 任务统计
+        stats_group = QGroupBox("任务统计")
+        stats_layout = QVBoxLayout()
+        
+        self.created_tasks_label = QLabel("已创建: 0")
+        self.assigned_tasks_label = QLabel("已分配: 0")
+        self.completed_tasks_label = QLabel("已完成: 0")
+        self.failed_tasks_label = QLabel("失败: 0")
+        
+        stats_layout.addWidget(self.created_tasks_label)
+        stats_layout.addWidget(self.assigned_tasks_label)
+        stats_layout.addWidget(self.completed_tasks_label)
+        stats_layout.addWidget(self.failed_tasks_label)
+        
+        stats_group.setLayout(stats_layout)
+        layout.addWidget(stats_group)
+        
+        layout.addStretch()
+    
+    def set_components(self, vehicle_scheduler, env):
+        """设置组件引用"""
+        self.vehicle_scheduler = vehicle_scheduler
+        self.env = env
+    
+    def update_display(self):
+        """更新显示"""
+        if not self.vehicle_scheduler:
+            return
+        
+        try:
+            stats = self.vehicle_scheduler.get_comprehensive_stats()
+            scheduler_stats = stats.get('scheduler_stats', {})
+            task_dist = stats.get('task_distribution', {})
+            
+            self.created_tasks_label.setText(f"已创建: {scheduler_stats.get('total_tasks_created', 0)}")
+            self.assigned_tasks_label.setText(f"已分配: {scheduler_stats.get('total_tasks_assigned', 0)}")
+            self.completed_tasks_label.setText(f"已完成: {scheduler_stats.get('total_tasks_completed', 0)}")
+            self.failed_tasks_label.setText(f"失败: {scheduler_stats.get('total_tasks_failed', 0)}")
+            
+        except Exception as e:
+            print(f"更新批量任务显示失败: {e}")
+
+class EnhancedVehicleGraphicsItem(QGraphicsItemGroup):
+    """增强的车辆图形项"""
+    
+    def __init__(self, vehicle_id, vehicle_data, parent=None):
+        super().__init__(parent)
+        self.vehicle_id = vehicle_id
+        self.vehicle_data = vehicle_data
+        self.position = vehicle_data.get('position', (0, 0, 0))
+        
+        # 创建车辆组件
+        self.vehicle_body = QGraphicsPolygonItem(self)
+        self.status_indicator = QGraphicsEllipseItem(self)
+        self.load_indicator = QGraphicsRectItem(self)
+        self.direction_line = QGraphicsLineItem(self)
+        self.conflict_indicator = QGraphicsEllipseItem(self)  # 冲突指示器
+        
+        # 标签
+        self.vehicle_label = QGraphicsTextItem(str(vehicle_id), self)
+        self.vehicle_label.setDefaultTextColor(PROFESSIONAL_COLORS['text'])
+        self.vehicle_label.setFont(QFont("Arial", 2, QFont.Bold))
+        
+        self.status_text = QGraphicsTextItem("", self)
+        self.status_text.setDefaultTextColor(PROFESSIONAL_COLORS['text'])
+        self.status_text.setFont(QFont("Arial", 1))
+        
+        self.setZValue(15)
+        self.update_appearance()
+        self.update_position()
+    
+    def update_appearance(self):
+        """更新车辆外观（修改版 - 考虑passing_status）"""
+        status = self.vehicle_data.get('status', 'idle')
+        passing_status = self.vehicle_data.get('passing_status', 0)
+        
+        # 如果车辆被停车，使用特殊颜色
+        if passing_status == 1:
+            color = QColor(255, 69, 0)  # 橙红色表示停车
+            print(f"车辆 {self.vehicle_id} 显示为停车状态")
+        else:
+            color = VEHICLE_STATUS_COLORS.get(status, VEHICLE_STATUS_COLORS['idle'])
+        
+        # 车辆主体
+        self.vehicle_body.setBrush(QBrush(color))
+        self.vehicle_body.setPen(QPen(color.darker(150), 1))
+        
+        # 状态指示器
+        self.status_indicator.setBrush(QBrush(color.lighter(130)))
+        self.status_indicator.setPen(QPen(color.darker(150), 1))
+        
+        # 冲突指示器
+        has_conflict = self.vehicle_data.get('has_conflict', False)
+        if has_conflict:
+            self.conflict_indicator.setBrush(QBrush(QColor(239, 68, 68, 200)))
+            self.conflict_indicator.setPen(QPen(QColor(239, 68, 68), 2))
+        else:
+            self.conflict_indicator.setBrush(QBrush(Qt.NoBrush))
+            self.conflict_indicator.setPen(QPen(Qt.NoPen))
+        
+        # 状态文本 - 显示passing_status
+        if passing_status == 1:
+            status_text = "STOPPED"
+        else:
+            status_text = status.upper()
+        
+        self.status_text.setPlainText(status_text)
+    
+    def update_position(self):
+        """更新车辆位置"""
+        if not self.position or len(self.position) < 3:
+            return
+        
+        x, y, theta = self.position
+        
+        # 车辆形状
+        length, width = 6.0, 3.0
+        half_length, half_width = length/2, width/2
+        
+        # 创建卡车形状
+        truck_points = [
+            QPointF(half_length, half_width * 0.8),
+            QPointF(half_length * 0.8, half_width),
+            QPointF(-half_length * 0.8, half_width),
+            QPointF(-half_length, half_width * 0.6),
+            QPointF(-half_length, -half_width * 0.6),
+            QPointF(-half_length * 0.8, -half_width),
+            QPointF(half_length * 0.8, -half_width),
+            QPointF(half_length, -half_width * 0.8)
+        ]
+        
+        # 应用旋转和平移
+        transform = QTransform()
+        transform.translate(x, y)
+        transform.rotate(math.degrees(theta))
+        
+        polygon = QPolygonF()
+        for point in truck_points:
+            polygon.append(transform.map(point))
+        
+        self.vehicle_body.setPolygon(polygon)
+        
+        # 更新其他组件位置
+        self.vehicle_label.setPos(x - 8, y - 12)
+        self.status_text.setPos(x - 6, y + 8)
+        self.status_indicator.setRect(x - 1, y - 1, 2, 2)
+        self.conflict_indicator.setRect(x - 2, y - 2, 4, 4)
+        
+        # 负载指示器
+        current_load = self.vehicle_data.get('current_load', 0)
+        max_load = self.vehicle_data.get('max_load', 100)
+        load_ratio = current_load / max_load if max_load > 0 else 0
+        self.load_indicator.setRect(x - half_length, y - width/2 - 3, length * load_ratio, 2)
+        
+        # 方向指示线
+        line_length = 4
+        end_x = x + line_length * math.cos(theta)
+        end_y = y + line_length * math.sin(theta)
+        self.direction_line.setLine(x, y, end_x, end_y)
+    
+    def update_data(self, vehicle_data):
+        """更新车辆数据"""
+        self.vehicle_data = vehicle_data
+        new_position = vehicle_data.get('position', self.position)
+        
+        self.position = new_position
+        self.update_position()
+        self.update_appearance()
+
+class EnhancedMineGUI(QMainWindow):
+    """增强的露天矿调度系统GUI - 修复版"""
     
     def __init__(self):
-        self.inherited_nodes = {}
+        super().__init__()
         
-    def create_inherited_nodes(self, mergeable_groups: List[List[NodePathMembership]]) -> Dict[str, InheritedNode]:
-        """创建继承节点"""
-        print(f"\n🧬 [节点继承] 开始创建继承节点")
+        # 系统组件
+        self.env = None
+        self.backbone_network = None
+        self.path_planner = None
+        self.conflict_detector = None
+        self.traffic_manager = None
+        self.vehicle_scheduler = None
         
-        inherited_nodes = {}
+        # 状态
+        self.is_simulating = False
+        self.simulation_time = 0
+        self.simulation_speed = 1.0
+        self.map_file_path = None
         
-        for group_id, group in enumerate(mergeable_groups):
-            # 计算质心位置作为继承节点位置（更安全）
-            inherit_position = self._calculate_safe_centroid(group)
-            
-            # 创建继承节点
-            inherited_node = InheritedNode(
-                node_id=f"inherited_{group_id}",
-                position=inherit_position
-            )
-            
-            # 继承所有成员信息
-            for membership in group:
-                inherited_node.add_membership(
-                    membership.path_id, 
-                    membership.node_index, 
-                    membership.position
-                )
-            
-            inherited_nodes[inherited_node.node_id] = inherited_node
-            
-            paths = set(m.path_id for m in group)
-            print(f"   继承节点 {inherited_node.node_id}: 位置{inherit_position[:2]}, "
-                  f"继承{len(group)}节点, 涉及{len(paths)}路径")
+        # 任务ID计数器
+        self.task_counter = 0
         
-        self.inherited_nodes = inherited_nodes
-        return inherited_nodes
+        # 调试模式
+        self.debug_mode = True
+        
+        # 初始化界面
+        self.init_ui()
+        
+        # 定时器
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self.update_display)
+        self.update_timer.start(100)
+        
+        self.sim_timer = QTimer(self)
+        self.sim_timer.timeout.connect(self.simulation_step)
+        
+        self.stats_timer = QTimer(self)
+        self.stats_timer.timeout.connect(self.update_statistics)
+        self.stats_timer.start(2000)
+        
+        print("🔧 初始化修复版GUI（集成调试工具）")
     
-    def _calculate_safe_centroid(self, group: List[NodePathMembership]) -> Tuple[float, float, float]:
-        """计算安全质心位置"""
-        # 计算所有节点的质心
-        x_sum = sum(m.position[0] for m in group)
-        y_sum = sum(m.position[1] for m in group)
-        z_sum = sum(m.position[2] if len(m.position) > 2 else 0 for m in group)
+    def init_ui(self):
+        """初始化用户界面"""
+        self.setWindowTitle("露天矿多车协同调度系统 - 修复调试版")
+        self.setGeometry(100, 100, 1600, 1000)
         
-        count = len(group)
-        centroid = (x_sum / count, y_sum / count, z_sum / count)
+        # 设置样式
+        self.setStyleSheet(f"""
+            QMainWindow {{
+                background-color: {PROFESSIONAL_COLORS['background'].name()};
+                color: {PROFESSIONAL_COLORS['text'].name()};
+            }}
+            QGroupBox {{
+                font-weight: bold;
+                border: 1px solid {PROFESSIONAL_COLORS['border'].name()};
+                border-radius: 4px;
+                margin-top: 8px;
+                padding-top: 6px;
+                color: {PROFESSIONAL_COLORS['text'].name()};
+            }}
+            QPushButton {{
+                background-color: {PROFESSIONAL_COLORS['primary'].name()};
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {PROFESSIONAL_COLORS['primary'].darker(110).name()};
+            }}
+        """)
         
-        # 验证质心是否安全，如果不安全则选择最近的安全节点
-        if self._is_position_safe(centroid):
-            return centroid
+        # 中央组件
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        # 主布局
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        
+        # 左侧控制面板
+        self.control_panel = self.create_control_panel()
+        self.control_panel.setMaximumWidth(300)
+        main_layout.addWidget(self.control_panel)
+        
+        # 中央视图
+        self.graphics_view = self.create_graphics_view()
+        main_layout.addWidget(self.graphics_view, 1)
+        
+        # 右侧面板
+        right_widget = QTabWidget()
+        right_widget.setMaximumWidth(350)
+        
+        # 冲突控制标签页
+        self.conflict_widget = ConflictControlWidget()
+        right_widget.addTab(self.conflict_widget, "冲突控制")
+        
+        # 批量任务标签页
+        self.batch_task_widget = BatchTaskWidget()
+        right_widget.addTab(self.batch_task_widget, "批量任务")
+        
+        main_layout.addWidget(right_widget)
+        
+        # 连接信号（在组件创建之后）
+        self.connect_signals()
+        
+        # 创建菜单和状态栏
+        self.create_menu_bar()
+        self.create_status_bar()
+    
+    def connect_signals(self):
+        """连接所有信号"""
+        # 批量任务按钮连接
+        self.batch_task_widget.create_batch_btn.clicked.connect(self.create_batch_tasks)
+        self.batch_task_widget.assign_all_btn.clicked.connect(self.assign_all_batch_tasks)
+        self.batch_task_widget.clear_tasks_btn.clicked.connect(self.clear_all_tasks)
+        
+        # 冲突控制按钮连接
+        self.conflict_widget.detect_conflicts_btn.clicked.connect(self.detect_conflicts)
+        self.conflict_widget.resolve_all_btn.clicked.connect(self.resolve_all_conflicts)
+        self.conflict_widget.emergency_clear_btn.clicked.connect(self.emergency_clear_conflicts)
+    
+    def create_control_panel(self):
+        """创建控制面板"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setSpacing(12)
+        
+        # 环境管理
+        env_group = QGroupBox("环境管理")
+        env_layout = QVBoxLayout()
+        
+        file_layout = QHBoxLayout()
+        self.file_label = QLabel("未选择文件")
+        self.file_label.setStyleSheet("""
+            QLabel {
+                background-color: rgb(45, 47, 57);
+                padding: 8px;
+                border: 1px solid rgb(75, 85, 99);
+                border-radius: 4px;
+                color: rgb(156, 163, 175);
+            }
+        """)
+        
+        self.browse_btn = QPushButton("浏览文件")
+        file_layout.addWidget(self.file_label, 1)
+        file_layout.addWidget(self.browse_btn)
+        
+        env_layout.addLayout(file_layout)
+        
+        control_layout = QHBoxLayout()
+        self.load_btn = QPushButton("加载环境")
+        self.save_btn = QPushButton("保存环境")
+        control_layout.addWidget(self.load_btn)
+        control_layout.addWidget(self.save_btn)
+        
+        env_layout.addLayout(control_layout)
+        env_group.setLayout(env_layout)
+        layout.addWidget(env_group)
+        
+        # 骨干网络
+        backbone_group = QGroupBox("骨干网络")
+        backbone_layout = QVBoxLayout()
+        
+        param_layout = QGridLayout()
+        param_layout.addWidget(QLabel("质量阈值:"), 0, 0)
+        self.quality_spin = QDoubleSpinBox()
+        self.quality_spin.setRange(0.1, 1.0)
+        self.quality_spin.setSingleStep(0.1)
+        self.quality_spin.setValue(0.6)
+        param_layout.addWidget(self.quality_spin, 0, 1)
+        
+        backbone_layout.addLayout(param_layout)
+        
+        self.generate_btn = QPushButton("生成骨干网络")
+        backbone_layout.addWidget(self.generate_btn)
+        
+        self.backbone_stats_label = QLabel("路径: 0 条")
+        self.backbone_stats_label.setStyleSheet("color: rgb(16, 185, 129); font-weight: bold;")
+        backbone_layout.addWidget(self.backbone_stats_label)
+        
+        backbone_group.setLayout(backbone_layout)
+        layout.addWidget(backbone_group)
+        
+        # 任务管理
+        task_group = QGroupBox("任务管理")
+        task_layout = QVBoxLayout()
+        
+        priority_layout = QHBoxLayout()
+        priority_layout.addWidget(QLabel("优先级:"))
+        self.priority_combo = QComboBox()
+        self.priority_combo.addItems(["低", "普通", "高", "紧急", "关键"])
+        self.priority_combo.setCurrentIndex(1)
+        priority_layout.addWidget(self.priority_combo)
+        task_layout.addLayout(priority_layout)
+        
+        assign_layout = QHBoxLayout()
+        self.assign_single_btn = QPushButton("分配单个")
+        self.assign_all_btn = QPushButton("批量分配")
+        assign_layout.addWidget(self.assign_single_btn)
+        assign_layout.addWidget(self.assign_all_btn)
+        
+        task_layout.addLayout(assign_layout)
+        task_group.setLayout(task_layout)
+        layout.addWidget(task_group)
+        
+        # 仿真控制
+        sim_group = QGroupBox("仿真控制")
+        sim_layout = QVBoxLayout()
+        
+        control_layout = QHBoxLayout()
+        self.start_btn = QPushButton("开始")
+        self.pause_btn = QPushButton("暂停")
+        self.reset_btn = QPushButton("重置")
+        
+        control_layout.addWidget(self.start_btn)
+        control_layout.addWidget(self.pause_btn)
+        control_layout.addWidget(self.reset_btn)
+        
+        sim_layout.addLayout(control_layout)
+        
+        # 速度控制
+        speed_layout = QHBoxLayout()
+        speed_layout.addWidget(QLabel("速度:"))
+        
+        self.speed_slider = QSlider(Qt.Horizontal)
+        self.speed_slider.setRange(1, 100)
+        self.speed_slider.setValue(50)
+        self.speed_label = QLabel("1.0x")
+        
+        speed_layout.addWidget(self.speed_slider, 1)
+        speed_layout.addWidget(self.speed_label)
+        
+        sim_layout.addLayout(speed_layout)
+        
+        # 进度条
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(True)
+        sim_layout.addWidget(self.progress_bar)
+        
+        sim_group.setLayout(sim_layout)
+        layout.addWidget(sim_group)
+        
+        # 调试控制组（新增）
+        debug_group = QGroupBox("调试控制")
+        debug_layout = QVBoxLayout()
+        
+        self.debug_conflicts_btn = QPushButton("调试冲突系统")
+        self.debug_tasks_btn = QPushButton("调试任务分配")
+        self.debug_paths_btn = QPushButton("调试路径占用")
+        
+        debug_layout.addWidget(self.debug_conflicts_btn)
+        debug_layout.addWidget(self.debug_tasks_btn)
+        debug_layout.addWidget(self.debug_paths_btn)
+        
+        debug_group.setLayout(debug_layout)
+        layout.addWidget(debug_group)
+        
+        layout.addStretch()
+        
+        # 连接信号
+        self.browse_btn.clicked.connect(self.browse_file)
+        self.load_btn.clicked.connect(self.load_environment)
+        self.save_btn.clicked.connect(self.save_environment)
+        self.generate_btn.clicked.connect(self.generate_backbone_network)
+        
+        self.assign_single_btn.clicked.connect(self.assign_single_vehicle)
+        self.assign_all_btn.clicked.connect(self.assign_all_vehicles)
+        
+        self.start_btn.clicked.connect(self.start_simulation)
+        self.pause_btn.clicked.connect(self.pause_simulation)
+        self.reset_btn.clicked.connect(self.reset_simulation)
+        
+        self.speed_slider.valueChanged.connect(self.update_simulation_speed)
+        
+        # 调试按钮连接
+        self.debug_conflicts_btn.clicked.connect(self.debug_conflict_system)
+        self.debug_tasks_btn.clicked.connect(self.debug_task_assignment)
+        self.debug_paths_btn.clicked.connect(self.debug_path_occupations)
+        
+        return panel
+    
+    def create_graphics_view(self):
+        """创建图形视图"""
+        from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene
+        
+        view = QGraphicsView()
+        scene = QGraphicsScene()
+        view.setScene(scene)
+        
+        view.setDragMode(QGraphicsView.RubberBandDrag)
+        view.setRenderHint(QPainter.Antialiasing)
+        
+        view.setStyleSheet(f"""
+            QGraphicsView {{
+                background-color: {PROFESSIONAL_COLORS['background'].name()};
+                border: 1px solid {PROFESSIONAL_COLORS['border'].name()};
+            }}
+        """)
+        
+        return view
+    
+    def create_menu_bar(self):
+        """创建菜单栏"""
+        menubar = self.menuBar()
+        
+        # 文件菜单
+        file_menu = menubar.addMenu('文件')
+        
+        open_action = file_menu.addAction('打开地图')
+        open_action.setShortcut('Ctrl+O')
+        open_action.triggered.connect(self.browse_file)
+        
+        save_action = file_menu.addAction('保存环境')
+        save_action.setShortcut('Ctrl+S')
+        save_action.triggered.connect(self.save_environment)
+        
+        # 冲突菜单
+        conflict_menu = menubar.addMenu('冲突控制')
+        
+        detect_action = conflict_menu.addAction('检测冲突')
+        detect_action.setShortcut('F9')
+        detect_action.triggered.connect(self.detect_conflicts)
+        
+        resolve_action = conflict_menu.addAction('解决冲突')
+        resolve_action.setShortcut('F10')
+        resolve_action.triggered.connect(self.resolve_all_conflicts)
+        
+        emergency_action = conflict_menu.addAction('紧急清除')
+        emergency_action.setShortcut('Ctrl+F10')
+        emergency_action.triggered.connect(self.emergency_clear_conflicts)
+        
+        # 调试菜单（新增）
+        debug_menu = menubar.addMenu('调试')
+        
+        debug_conflict_action = debug_menu.addAction('调试冲突系统')
+        debug_conflict_action.setShortcut('F12')
+        debug_conflict_action.triggered.connect(self.debug_conflict_system)
+        
+        debug_task_action = debug_menu.addAction('调试任务分配')
+        debug_task_action.setShortcut('Ctrl+F12')
+        debug_task_action.triggered.connect(self.debug_task_assignment)
+        
+        debug_path_action = debug_menu.addAction('调试路径占用')
+        debug_path_action.setShortcut('Shift+F12')
+        debug_path_action.triggered.connect(self.debug_path_occupations)
+    
+    def create_status_bar(self):
+        """创建状态栏"""
+        self.status_bar = self.statusBar()
+        
+        self.status_label = QLabel("系统就绪")
+        self.status_bar.addWidget(self.status_label)
+        
+        self.status_bar.addPermanentWidget(QLabel(" | "))
+        
+        self.vehicle_count_label = QLabel("车辆: 0")
+        self.status_bar.addPermanentWidget(self.vehicle_count_label)
+        
+        self.status_bar.addPermanentWidget(QLabel(" | "))
+        
+        self.conflicts_label = QLabel("冲突: 0")
+        self.status_bar.addPermanentWidget(self.conflicts_label)
+        
+        self.status_bar.addPermanentWidget(QLabel(" | "))
+        
+        self.sim_time_label = QLabel("时间: 00:00")
+        self.status_bar.addPermanentWidget(self.sim_time_label)
+    
+    # ==================== 系统组件创建 ====================
+    
+    def create_system_components(self):
+        """创建增强系统组件"""
+        try:
+            print("开始创建增强系统组件...")
+            
+            # 创建路径规划器
+            self.path_planner = EnhancedPathPlannerWithConfig(self.env)
+            print("✅ 路径规划器创建成功")
+            
+            # 创建骨干网络
+            self.backbone_network = OptimizedBackboneNetwork(self.env)
+            self.backbone_network.set_path_planner(self.path_planner)
+            print("✅ 骨干网络创建成功")
+            
+            # 创建冲突检测器
+            self.conflict_detector = EnhancedBackboneConflictDetector(self.backbone_network)
+            print("✅ 冲突检测器创建成功")
+            
+            # 创建交通管理器
+            self.traffic_manager = EnhancedBackboneTrafficManager(
+                self.env, self.backbone_network, self.conflict_detector
+            )
+            print("✅ 交通管理器创建成功")
+            
+            # 创建车辆调度器
+            self.vehicle_scheduler = EnhancedBackboneVehicleScheduler(
+                self.env, self.backbone_network, self.path_planner, 
+                self.conflict_detector, self.traffic_manager
+            )
+            print("✅ 车辆调度器创建成功")
+            
+            # 设置组件间引用
+            self.path_planner.set_backbone_network(self.backbone_network)
+            
+            # 初始化车辆状态
+            self.vehicle_scheduler.initialize_vehicles()
+            
+            # 设置GUI组件引用
+            self.conflict_widget.set_components(self.conflict_detector, self.traffic_manager)
+            self.batch_task_widget.set_components(self.vehicle_scheduler, self.env)
+            
+            print("🎉 增强系统组件创建完成")
+            return True
+            
+        except Exception as e:
+            print(f"❌ 系统组件创建失败: {e}")
+            return False
+    
+    # ==================== 调试工具方法（新增） ====================
+    def debug_task_stages(self, task_id=None):
+        """调试任务阶段状态"""
+        print("\n" + "="*50)
+        print("📋 任务阶段调试")
+        print("="*50)
+        
+        if not self.vehicle_scheduler:
+            print("❌ 调度器未初始化")
+            return
+        
+        if task_id:
+            # 调试特定任务
+            if task_id not in self.vehicle_scheduler.tasks:
+                print(f"任务 {task_id} 不存在")
+                return
+            
+            task = self.vehicle_scheduler.tasks[task_id]
+            print(f"\n🔍 任务详情: {task_id}")
+            print(f"任务类型: {task.task_type}")
+            print(f"归属车辆: {task.vehicle_id}")
+            print(f"当前阶段: {task.current_stage_index}/{len(task.stages)}")
+            print(f"路径进度: {getattr(task, 'path_progress', 'N/A')}")
+            print(f"状态: {task.status.value}")
+            
+            for i, stage in enumerate(task.stages):
+                marker = "👉" if i == task.current_stage_index else "  "
+                status = "✅" if stage.completed else "⏳"
+                print(f"{marker} 阶段{i}: {stage.stage.value} @ {stage.target_type}_{stage.target_id} {status}")
+                print(f"     位置: ({stage.location[0]:.1f}, {stage.location[1]:.1f})")
         else:
-            # 选择距离质心最近的安全原始节点
-            min_distance = float('inf')
-            safe_position = group[0].position  # 默认第一个
+            # 调试所有活跃任务
+            active_tasks = []
+            for task_id, task in self.vehicle_scheduler.tasks.items():
+                if task.status in [TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS]:
+                    active_tasks.append((task_id, task))
             
-            for membership in group:
-                if self._is_position_safe(membership.position):
-                    distance = math.sqrt(
-                        (membership.position[0] - centroid[0])**2 + 
-                        (membership.position[1] - centroid[1])**2
-                    )
-                    if distance < min_distance:
-                        min_distance = distance
-                        safe_position = membership.position
+            print(f"📊 活跃任务数量: {len(active_tasks)}")
             
-            return safe_position
-    
-    def _is_position_safe(self, position: Tuple) -> bool:
-        """检查位置是否安全（简单版本，子类可重写）"""
-        # 基础检查：确保位置在合理范围内
-        x, y = position[0], position[1]
-        return not (x < 0 or y < 0 or x > 1000 or y > 1000)  # 假设环境不超过1000x1000
-
-class PathInheritanceApplicator:
-    """路径继承应用器"""
-    
-    def apply_inheritance_to_paths(self, bidirectional_paths: Dict, 
-                                 inherited_nodes: Dict[str, InheritedNode]) -> Dict[str, Any]:
-        """应用继承到路径"""
-        print(f"\n🔄 [路径重建] 开始应用节点继承")
-        
-        # 建立节点替换映射
-        replacement_map = {}  # {(path_id, node_index): inherited_node_id}
-        
-        for inherited_node in inherited_nodes.values():
-            for membership in inherited_node.memberships:
-                key = (membership.path_id, membership.node_index)
-                replacement_map[key] = inherited_node
-        
-        # 重建每条路径
-        rebuilt_paths = {}
-        
-        for path_id, path_data in bidirectional_paths.items():
-            new_forward_path = []
-            
-            for i, original_node in enumerate(path_data.forward_path):
-                key = (path_id, i)
+            for task_id, task in active_tasks:
+                print(f"\n📝 任务 {task_id}:")
+                print(f"   类型: {task.task_type}")
+                print(f"   车辆: {task.vehicle_id}")
+                print(f"   阶段: {task.current_stage_index}/{len(task.stages)}")
+                print(f"   进度: {getattr(task, 'path_progress', 'N/A')}")
                 
-                if key in replacement_map:
-                    # 使用继承节点位置
-                    inherited_node = replacement_map[key]
-                    new_forward_path.append(inherited_node.position)
-                else:
-                    # 保持原节点
-                    new_forward_path.append(original_node)
-            
-            # 创建新的路径对象
-            rebuilt_path = self._create_inherited_backbone_path(
-                path_id, path_data, new_forward_path, replacement_map
-            )
-            rebuilt_paths[path_id] = rebuilt_path
-            
-            # 计算继承影响
-            inherited_count = sum(1 for i in range(len(path_data.forward_path)) 
-                                if (path_id, i) in replacement_map)
-            print(f"   路径 {path_id}: {inherited_count}/{len(path_data.forward_path)} 节点被继承")
+                current_stage = task.get_current_stage()
+                if current_stage:
+                    print(f"   当前: {current_stage.stage.value} @ {current_stage.target_type}_{current_stage.target_id}")
         
-        print(f"   ✅ 路径重建完成: {len(rebuilt_paths)} 条路径")
-        return rebuilt_paths
-    
-    def _create_inherited_backbone_path(self, path_id: str, original_path: Any, 
-                                      new_forward_path: List, replacement_map: Dict):
-        """创建继承后的骨干路径对象"""
-        class InheritedBackbonePath:
-            def __init__(self, path_id, original_path, new_forward_path, replacement_map):
-                self.path_id = path_id
-                self.forward_path = new_forward_path
-                self.reverse_path = list(reversed(new_forward_path))
-                self.length = self._calculate_length(new_forward_path)
-                self.quality = original_path.quality * 0.95  # 轻微质量损失
-                self.planner_used = 'inheritance_consolidation'
-                self.created_time = time.time()
-                self.usage_count = original_path.usage_count if hasattr(original_path, 'usage_count') else 0
-                self.current_load = 0
-                self.max_capacity = 5
+        print("="*50)
+    def debug_conflict_system(self):
+        """调试冲突检测系统 - 修复增强版"""
+        print("\n" + "="*60)
+        print("🔍 冲突检测系统调试 - 修复版")
+        print("="*60)
+        
+        if not self.vehicle_scheduler or not self.conflict_detector:
+            print("❌ 系统组件未初始化")
+            return
+        
+        # 1. 检查车辆任务分配
+        print("\n📋 车辆任务分配状态:")
+        task_assignments = {}
+        duplicate_assignments = []
+        
+        for vehicle_id, vehicle_state in self.vehicle_scheduler.vehicle_states.items():
+            task_id = vehicle_state.current_task_id
+            if task_id:
+                if task_id not in task_assignments:
+                    task_assignments[task_id] = []
+                task_assignments[task_id].append(vehicle_id)
                 
-                # 端点信息
-                self.point_a = original_path.point_a
-                self.point_b = original_path.point_b
-                
-                # 继承信息
-                self.inherited_node_count = sum(1 for i in range(len(new_forward_path)) 
-                                              if (path_id, i) in replacement_map)
-                self.is_consolidated = True
-                self.consolidation_level = "node_inheritance"
-                self.original_path_ids = [path_id]
-                self.quality_history = [self.quality]
-                self.last_quality_update = time.time()
-            
-            def get_path(self, from_point_type, from_point_id, to_point_type, to_point_id):
-                if (self.point_a['type'] == from_point_type and self.point_a['id'] == from_point_id and
-                    self.point_b['type'] == to_point_type and self.point_b['id'] == to_point_id):
-                    return self.forward_path
-                elif (self.point_b['type'] == from_point_type and self.point_b['id'] == from_point_id and
-                      self.point_a['type'] == to_point_type and self.point_a['id'] == to_point_id):
-                    return self.reverse_path
-                return None
-            
-            def increment_usage(self):
-                self.usage_count += 1
-            
-            def add_vehicle(self, vehicle_id):
-                self.current_load += 1
-            
-            def remove_vehicle(self, vehicle_id):
-                self.current_load = max(0, self.current_load - 1)
-            
-            def get_load_factor(self):
-                return self.current_load / self.max_capacity
-            
-            def update_quality_history(self, new_quality):
-                self.quality_history.append(new_quality)
-                self.last_quality_update = time.time()
-                if len(self.quality_history) > 20:
-                    self.quality_history = self.quality_history[-10:]
-            
-            def get_average_quality(self):
-                return sum(self.quality_history) / len(self.quality_history) if self.quality_history else self.quality
-            
-            def _calculate_length(self, path):
-                if len(path) < 2:
-                    return 0.0
-                return sum(
-                    math.sqrt((path[i+1][0] - path[i][0])**2 + (path[i+1][1] - path[i][1])**2)
-                    for i in range(len(path) - 1)
-                )
+                task = self.vehicle_scheduler.tasks.get(task_id)
+                if task:
+                    ownership_status = "✅" if task.vehicle_id == vehicle_id else "❌"
+                    print(f"  车辆 {vehicle_id}: 任务 {task_id} (归属: {task.vehicle_id}) {ownership_status}")
+                    if task.vehicle_id != vehicle_id:
+                        print(f"    ⚠️ 归属不匹配!")
         
-        return InheritedBackbonePath(path_id, original_path, new_forward_path, replacement_map)
-
-class PathRefitter:
-    """路径重拟合器"""
-    
-    def __init__(self, env):
-        self.env = env
-        self.vehicle_width = 3.0
-        self.safety_margin = 1.5
-        
-    def refit_inherited_paths(self, rebuilt_paths: Dict, inherited_nodes: Dict) -> Dict[str, Any]:
-        """重拟合继承后的路径"""
-        print(f"\n🎯 [路径拟合] 开始重拟合继承路径")
-        
-        refitted_paths = {}
-        
-        for path_id, path_obj in rebuilt_paths.items():
-            print(f"   拟合路径: {path_id}")
-            
-            # 识别关键节点
-            key_nodes = self._identify_key_nodes(path_obj, inherited_nodes)
-            
-            # 路径拟合
-            fitted_path = self._fit_path_through_keypoints(path_obj.forward_path, key_nodes)
-            
-            if fitted_path:
-                # 创建拟合后的路径对象
-                refitted_path = self._create_refitted_path(path_id, path_obj, fitted_path, key_nodes)
-                refitted_paths[path_id] = refitted_path
-                print(f"     ✅ 拟合成功: {len(fitted_path)}点, {len(key_nodes)}关键节点")
+        # 2. 检查重复分配
+        print("\n🚨 重复分配检查:")
+        for task_id, vehicles in task_assignments.items():
+            if len(vehicles) > 1:
+                print(f"  ❌ 任务 {task_id} 被分配给多个车辆: {vehicles}")
+                duplicate_assignments.append(task_id)
             else:
-                # 保持原路径
-                refitted_paths[path_id] = path_obj
-                print(f"     ⚠️ 拟合失败，保持原路径")
+                print(f"  ✅ 任务 {task_id} 正常分配给: {vehicles[0]}")
         
-        return refitted_paths
+        # 3. 检查骨干路径占用
+        print("\n🛤️ 骨干路径占用:")
+        total_occupations = 0
+        conflicting_segments = []
+        
+        for segment_id, occupations in self.conflict_detector.segment_occupations.items():
+            total_occupations += len(occupations)
+            if len(occupations) > 1:
+                print(f"  ⚠️ 路径段 {segment_id}: {len(occupations)} 个占用")
+                conflicting_segments.append(segment_id)
+                for occ in occupations:
+                    print(f"    车辆 {occ.vehicle_id}: {occ.planned_entry_time:.1f}-{occ.planned_exit_time:.1f}s")
+                    
+                    # 检查时间重叠
+                    for other_occ in occupations:
+                        if other_occ.vehicle_id != occ.vehicle_id and occ.overlaps_with(other_occ):
+                            overlap = occ.get_overlap_duration(other_occ)
+                            print(f"      ❌ 与车辆 {other_occ.vehicle_id} 重叠 {overlap:.1f}s")
+            else:
+                print(f"  ✅ 路径段 {segment_id}: 1 个占用 (车辆 {occupations[0].vehicle_id})")
+        
+        print(f"\n📊 总占用记录: {total_occupations}")
+        print(f"📊 冲突段数: {len(conflicting_segments)}")
+        
+        # 4. 强制冲突检测
+        print("\n🔍 强制冲突检测:")
+        conflicts = self.conflict_detector.detect_backbone_conflicts()
+        print(f"  检测结果: {len(conflicts)} 个冲突")
+        
+        for conflict in conflicts:
+            print(f"    冲突 {conflict.conflict_id}:")
+            print(f"      车辆: {conflict.conflicting_vehicles}")
+            print(f"      路径段: {conflict.segment_id}")
+            print(f"      严重程度: {conflict.severity.value}")
+            print(f"      优先级顺序: {conflict.priority_order}")
+        
+        # 5. 车辆位置检查
+        print("\n📍 车辆位置:")
+        vehicle_positions = {}
+        for vehicle_id in self.env.vehicles:
+            if vehicle_id in self.vehicle_scheduler.vehicle_states:
+                pos = self.vehicle_scheduler.vehicle_states[vehicle_id].current_position
+                vehicle_positions[vehicle_id] = pos
+                print(f"  车辆 {vehicle_id}: ({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.3f})")
+        
+        # 检查位置重叠
+        print("\n🔄 位置重叠检查:")
+        for vid1, pos1 in vehicle_positions.items():
+            for vid2, pos2 in vehicle_positions.items():
+                if vid1 < vid2:  # 避免重复检查
+                    distance = math.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
+                    if distance < 5.0:  # 距离小于5米认为可能重叠
+                        print(f"  ⚠️ 车辆 {vid1} 和 {vid2} 距离过近: {distance:.1f}m")
+        
+        # 总结
+        print(f"\n" + "="*60)
+        print("📊 调试总结:")
+        print(f"  重复任务分配: {len(duplicate_assignments)} 个")
+        print(f"  冲突路径段: {len(conflicting_segments)} 个")
+        print(f"  检测到冲突: {len(conflicts)} 个")
+        print("="*60)
+        
+        # 更新状态栏
+        self.conflicts_label.setText(f"冲突: {len(conflicts)}")
     
-    def _identify_key_nodes(self, path_obj, inherited_nodes: Dict) -> List[Tuple]:
-        """识别路径上的关键节点"""
-        key_nodes = []
+    def debug_task_assignment(self):
+        """调试任务分配"""
+        print("\n" + "="*50)
+        print("📋 任务分配系统调试")
+        print("="*50)
         
-        # 起点
-        key_nodes.append(path_obj.forward_path[0])
+        if not self.vehicle_scheduler:
+            print("❌ 调度器未初始化")
+            return
         
-        # 继承节点
-        for inherited_node in inherited_nodes.values():
-            for membership in inherited_node.memberships:
-                if membership.path_id == path_obj.path_id:
-                    key_nodes.append(inherited_node.position)
-                    break
+        # 获取调试信息
+        debug_info = self.vehicle_scheduler.debug_vehicle_assignment_status()
         
-        # 终点
-        key_nodes.append(path_obj.forward_path[-1])
+        print(f"\n🚗 车辆总览:")
+        print(f"  总车辆数: {debug_info['assignment_summary']['total_vehicles']}")
+        print(f"  空闲车辆: {debug_info['assignment_summary']['idle_vehicles']}")
+        print(f"  忙碌车辆: {debug_info['assignment_summary']['busy_vehicles']}")
+        print(f"  可分配车辆: {debug_info['assignment_summary']['available_for_assignment']}")
         
-        return key_nodes
+        print(f"\n📝 车辆详情:")
+        for vehicle_id, vinfo in debug_info['vehicles'].items():
+            status_icon = "✅" if vinfo['available_for_assignment'] else "❌"
+            print(f"  {status_icon} 车辆 {vehicle_id}:")
+            print(f"      状态: {vinfo['status']}")
+            print(f"      位置: ({vinfo['position'][0]:.1f}, {vinfo['position'][1]:.1f})")
+            print(f"      任务队列: {vinfo['task_queue_size']}")
+            print(f"      当前任务: {vinfo['current_task']}")
+            print(f"      完成任务: {vinfo['total_tasks_completed']}")
+            print(f"      冲突次数: {vinfo['conflict_involvements']}")
+        
+        # 分配策略信息
+        strategy_info = self.vehicle_scheduler.get_assignment_strategy_info()
+        print(f"\n⚙️ 分配策略:")
+        print(f"  当前策略: {strategy_info['current_strategy']}")
+        print(f"  轮询索引: {strategy_info['last_assigned_vehicle_index']}")
+        
+        # 任务状态统计
+        stats = self.vehicle_scheduler.get_comprehensive_stats()
+        task_dist = stats.get('task_distribution', {})
+        
+        print(f"\n📊 任务统计:")
+        for status, count in task_dist.items():
+            print(f"  {status}: {count}")
+        
+        print("="*50)
     
-    def _fit_path_through_keypoints(self, original_path: List, key_nodes: List) -> Optional[List]:
-        """通过关键节点拟合路径 - 安全优先版本"""
-        if len(key_nodes) < 2:
-            return original_path
+    def debug_path_occupations(self):
+        """调试路径占用"""
+        print("\n" + "="*50)
+        print("🛤️ 路径占用调试")
+        print("="*50)
         
-        # 首先尝试保守的线性插值
-        linear_path = self._linear_interpolate_keypoints(key_nodes)
-        if linear_path and self._validate_fitted_path(linear_path):
-            print(f"     使用安全线性插值")
-            return linear_path
+        if not self.conflict_detector:
+            print("❌ 冲突检测器未初始化")
+            return
         
-        # 如果线性插值失败，尝试样条拟合
-        if SCIPY_AVAILABLE and len(key_nodes) >= 3:
-            spline_path = self._safe_spline_fit_keypoints(key_nodes)
-            if spline_path and self._validate_fitted_path(spline_path):
-                print(f"     使用安全样条拟合")
-                return spline_path
+        print(f"\n📈 占用统计:")
+        total_segments = len(self.conflict_detector.segment_occupations)
+        total_occupations = sum(len(occs) for occs in self.conflict_detector.segment_occupations.values())
         
-        # 最后回退到原始路径的关键段
-        print(f"     回退到原始路径段")
-        return self._extract_safe_original_segments(original_path, key_nodes)
+        print(f"  路径段总数: {total_segments}")
+        print(f"  占用记录总数: {total_occupations}")
+        
+        print(f"\n📋 详细占用:")
+        for segment_id, occupations in self.conflict_detector.segment_occupations.items():
+            print(f"  路径段 {segment_id}: {len(occupations)} 个占用")
+            
+            for i, occ in enumerate(occupations):
+                print(f"    [{i+1}] 车辆 {occ.vehicle_id}:")
+                print(f"        时间: {occ.planned_entry_time:.1f} - {occ.planned_exit_time:.1f}s")
+                print(f"        优先级: {occ.vehicle_priority}")
+                print(f"        请求时间: {occ.request_time:.1f}")
+                
+                # 检查与其他占用的重叠
+                for j, other_occ in enumerate(occupations):
+                    if i != j and occ.overlaps_with(other_occ):
+                        overlap = occ.get_overlap_duration(other_occ)
+                        print(f"        ⚠️ 与 [{j+1}] 重叠 {overlap:.1f}s")
+        
+        # 车辆占用索引
+        print(f"\n🚗 车辆占用索引:")
+        for vehicle_id, segment_ids in self.conflict_detector.vehicle_occupations.items():
+            print(f"  车辆 {vehicle_id}: {len(segment_ids)} 个路径段")
+            for seg_id in segment_ids:
+                print(f"    - {seg_id}")
+        
+        print("="*50)
     
-    def _safe_spline_fit_keypoints(self, key_nodes: List) -> Optional[List]:
-        """安全的样条拟合关键节点"""
+    # ==================== 主要功能方法 ====================
+    
+    def browse_file(self):
+        """浏览文件"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "打开地图文件", "", "JSON文件 (*.json);;所有文件 (*)"
+        )
+        
+        if file_path:
+            self.map_file_path = file_path
+            filename = os.path.basename(file_path)
+            self.file_label.setText(filename)
+            self.file_label.setStyleSheet("""
+                QLabel {
+                    background-color: rgb(16, 185, 129);
+                    color: white;
+                    padding: 8px;
+                    border: 1px solid rgb(75, 85, 99);
+                    border-radius: 4px;
+                }
+            """)
+    
+    def load_environment(self):
+        """加载环境"""
+        if not self.map_file_path:
+            QMessageBox.warning(self, "警告", "请先选择地图文件")
+            return
+        
         try:
-            # 验证关键节点都是安全的
-            for node in key_nodes:
-                if self._is_point_colliding(node):
-                    print(f"     关键节点不安全，跳过样条拟合")
-                    return None
+            self.status_label.setText("正在加载环境...")
             
-            # 计算累积距离
-            distances = [0.0]
-            for i in range(1, len(key_nodes)):
-                dist = math.sqrt((key_nodes[i][0] - key_nodes[i-1][0])**2 + 
-                               (key_nodes[i][1] - key_nodes[i-1][1])**2)
-                distances.append(distances[-1] + dist)
+            # 创建环境
+            self.env = OptimizedOpenPitMineEnv()
+            if not self.env.load_from_file(self.map_file_path):
+                raise Exception("环境加载失败")
             
-            x_coords = [kn[0] for kn in key_nodes]
-            y_coords = [kn[1] for kn in key_nodes]
+            # 设置到视图
+            self.setup_graphics_view()
             
-            # 样条插值
-            cs_x = CubicSpline(distances, x_coords, bc_type='natural')
-            cs_y = CubicSpline(distances, y_coords, bc_type='natural')
+            # 创建系统组件
+            if not self.create_system_components():
+                raise Exception("系统组件创建失败")
             
-            # 生成密集路径，但步长更小以确保安全
-            total_dist = distances[-1]
-            num_points = max(20, int(total_dist / 1.0))  # 更密集的采样
-            t_values = [i * total_dist / (num_points - 1) for i in range(num_points)]
+            self.status_label.setText("环境加载成功")
+            self.enable_controls(True)
             
-            fitted_path = []
-            for t in t_values:
-                x = float(cs_x(t))
-                y = float(cs_y(t))
-                
-                # 计算朝向
-                if t < total_dist - 0.1:
-                    dx = float(cs_x(t + 0.1, nu=1))
-                    dy = float(cs_y(t + 0.1, nu=1))
-                    theta = math.atan2(dy, dx)
-                else:
-                    theta = key_nodes[-1][2] if len(key_nodes[-1]) > 2 else 0
-                
-                new_point = (x, y, theta)
-                
-                # 实时检查每个生成的点
-                if self._is_point_colliding(new_point):
-                    print(f"     样条拟合产生不安全点，终止")
-                    return None
-                
-                fitted_path.append(new_point)
-            
-            return fitted_path
+            # 更新车辆计数
+            self.vehicle_count_label.setText(f"车辆: {len(self.env.vehicles)}")
             
         except Exception as e:
-            print(f"     安全样条拟合失败: {e}")
-            return None
+            self.status_label.setText("加载失败")
+            QMessageBox.critical(self, "错误", f"加载环境失败:\n{str(e)}")
     
-    def _extract_safe_original_segments(self, original_path: List, key_nodes: List) -> List:
-        """提取原始路径的安全段"""
-        if not original_path or not key_nodes:
-            return original_path
+    def setup_graphics_view(self):
+        """设置图形视图"""
+        scene = self.graphics_view.scene()
+        scene.clear()
         
-        # 找到原始路径中最接近关键节点的点
-        key_indices = []
-        for key_node in key_nodes:
-            min_dist = float('inf')
-            closest_idx = 0
-            
-            for i, orig_point in enumerate(original_path):
-                dist = math.sqrt(
-                    (orig_point[0] - key_node[0])**2 + 
-                    (orig_point[1] - key_node[1])**2
-                )
-                if dist < min_dist:
-                    min_dist = dist
-                    closest_idx = i
-            
-            key_indices.append(closest_idx)
+        if not self.env:
+            return
         
-        # 按索引排序
-        key_indices.sort()
+        # 设置场景范围
+        scene.setSceneRect(0, 0, self.env.width, self.env.height)
         
-        # 提取路径段
-        safe_path = []
-        start_idx = key_indices[0]
-        end_idx = key_indices[-1]
+        # 绘制背景
+        background = QGraphicsRectItem(0, 0, self.env.width, self.env.height)
+        background.setBrush(QBrush(PROFESSIONAL_COLORS['background']))
+        background.setPen(QPen(Qt.NoPen))
+        background.setZValue(-100)
+        scene.addItem(background)
         
-        for i in range(start_idx, end_idx + 1):
-            safe_path.append(original_path[i])
+        # 绘制障碍物
+        for x, y in self.env.obstacle_points:
+            rect = QGraphicsRectItem(x, y, 1, 1)
+            rect.setBrush(QBrush(PROFESSIONAL_COLORS['surface']))
+            rect.setPen(QPen(PROFESSIONAL_COLORS['border'], 0.1))
+            rect.setZValue(-50)
+            scene.addItem(rect)
         
-        return safe_path if safe_path else original_path
+        # 绘制特殊点
+        self.draw_special_points()
+        
+        # 绘制车辆
+        self.draw_vehicles()
+        
+        # 适应视图
+        self.graphics_view.fitInView(scene.sceneRect(), Qt.KeepAspectRatio)
     
-    def _spline_fit_keypoints(self, key_nodes: List) -> Optional[List]:
-        """样条拟合关键节点"""
+    def draw_special_points(self):
+        """绘制特殊点"""
+        scene = self.graphics_view.scene()
+        
+        # 装载点
+        for i, point in enumerate(self.env.loading_points):
+            x, y = point[0], point[1]
+            area = QGraphicsEllipseItem(x-3, y-3, 6, 6)
+            area.setBrush(QBrush(QColor(16, 185, 129, 100)))
+            area.setPen(QPen(PROFESSIONAL_COLORS['success'], 2))
+            area.setZValue(-20)
+            scene.addItem(area)
+            
+            text = QGraphicsTextItem(f"L{i+1}")
+            text.setPos(x-8, y-20)
+            text.setDefaultTextColor(PROFESSIONAL_COLORS['success'])
+            text.setFont(QFont("Arial", 2, QFont.Bold))
+            scene.addItem(text)
+        
+        # 卸载点
+        for i, point in enumerate(self.env.unloading_points):
+            x, y = point[0], point[1]
+            area = QGraphicsRectItem(x-3, y-3, 6, 6)
+            area.setBrush(QBrush(QColor(245, 158, 11, 100)))
+            area.setPen(QPen(PROFESSIONAL_COLORS['warning'], 2))
+            area.setZValue(-20)
+            scene.addItem(area)
+            
+            text = QGraphicsTextItem(f"U{i+1}")
+            text.setPos(x-8, y-20)
+            text.setDefaultTextColor(PROFESSIONAL_COLORS['warning'])
+            text.setFont(QFont("Arial", 2, QFont.Bold))
+            scene.addItem(text)
+    
+    def draw_vehicles(self):
+        """绘制车辆"""
+        if not self.env:
+            return
+        
+        scene = self.graphics_view.scene()
+        
+        # 清除现有车辆和路径
+        for item in scene.items():
+            if isinstance(item, EnhancedVehicleGraphicsItem):
+                scene.removeItem(item)
+            elif hasattr(item, 'item_type') and item.item_type == 'vehicle_path':
+                scene.removeItem(item)
+        
+        # 添加车辆
+        for vehicle_id, vehicle_info in self.env.vehicles.items():
+            # 创建增强车辆数据
+            vehicle_data = self.create_enhanced_vehicle_data(vehicle_id, vehicle_info)
+            
+            vehicle_item = EnhancedVehicleGraphicsItem(vehicle_id, vehicle_data)
+            scene.addItem(vehicle_item)
+            
+            # 绘制车辆路径
+            self.draw_vehicle_path(vehicle_id)
+    
+    def draw_vehicle_path(self, vehicle_id):
+        """绘制车辆路径"""
+        if not self.vehicle_scheduler:
+            return
+        
+        vehicle_state = self.vehicle_scheduler.vehicle_states.get(vehicle_id)
+        if not vehicle_state or not vehicle_state.current_task_id:
+            return
+        
+        task = self.vehicle_scheduler.tasks.get(vehicle_state.current_task_id)
+        if not task or not task.complete_path:
+            return
+        
+        scene = self.graphics_view.scene()
+        
+        # 创建路径
+        if len(task.complete_path) >= 2:
+            painter_path = QPainterPath()
+            painter_path.moveTo(task.complete_path[0][0], task.complete_path[0][1])
+            
+            for point in task.complete_path[1:]:
+                painter_path.lineTo(point[0], point[1])
+            
+            path_item = QGraphicsPathItem(painter_path)
+            
+            # 根据任务状态设置颜色
+            if task.status.value == 'assigned':
+                color = QColor(66, 135, 245, 150)  # 蓝色 - 已分配
+            elif task.status.value == 'in_progress':
+                color = QColor(16, 185, 129, 150)  # 绿色 - 执行中
+            else:
+                color = QColor(156, 163, 175, 100)  # 灰色 - 其他
+            
+            pen = QPen(color, 2)
+            pen.setStyle(Qt.DashLine)
+            path_item.setPen(pen)
+            path_item.setZValue(5)
+            path_item.item_type = 'vehicle_path'  # 标记类型
+            
+            scene.addItem(path_item)
+    
+    def create_enhanced_vehicle_data(self, vehicle_id, vehicle_info):
+        """创建增强车辆数据（修改版 - 包含passing_status）"""
+        enhanced_data = {}
+        
+        if hasattr(vehicle_info, '__dict__'):
+            enhanced_data['vehicle_id'] = getattr(vehicle_info, 'vehicle_id', vehicle_id)
+            enhanced_data['position'] = getattr(vehicle_info, 'position', (0, 0, 0))
+            enhanced_data['status'] = getattr(vehicle_info, 'status', 'idle')
+            enhanced_data['current_load'] = getattr(vehicle_info, 'current_load', 0)
+            enhanced_data['max_load'] = getattr(vehicle_info, 'max_load', 100)
+            
+            # === 新增：passing_status ===
+            enhanced_data['passing_status'] = getattr(vehicle_info, 'passing_status', 0)
+            
+        elif isinstance(vehicle_info, dict):
+            enhanced_data = vehicle_info.copy()
+            enhanced_data['passing_status'] = vehicle_info.get('passing_status', 0)
+        
+        # 添加冲突信息
+        enhanced_data['has_conflict'] = False
+        if self.conflict_detector:
+            try:
+                conflicts = self.conflict_detector.get_vehicle_conflicts(vehicle_id)
+                enhanced_data['has_conflict'] = len(conflicts) > 0
+            except:
+                pass
+        
+        return enhanced_data
+    
+    def generate_backbone_network(self):
+        """生成骨干网络"""
+        if not self.env or not self.backbone_network:
+            QMessageBox.warning(self, "警告", "请先加载环境")
+            return
+        
         try:
-            # 计算累积距离
-            distances = [0.0]
-            for i in range(1, len(key_nodes)):
-                dist = math.sqrt((key_nodes[i][0] - key_nodes[i-1][0])**2 + 
-                               (key_nodes[i][1] - key_nodes[i-1][1])**2)
-                distances.append(distances[-1] + dist)
+            self.status_label.setText("正在生成骨干网络...")
             
-            x_coords = [kn[0] for kn in key_nodes]
-            y_coords = [kn[1] for kn in key_nodes]
+            quality_threshold = self.quality_spin.value()
             
-            # 样条插值
-            cs_x = CubicSpline(distances, x_coords, bc_type='natural')
-            cs_y = CubicSpline(distances, y_coords, bc_type='natural')
+            success = self.backbone_network.generate_backbone_network(
+                quality_threshold=quality_threshold
+            )
             
-            # 生成密集路径
-            total_dist = distances[-1]
-            num_points = max(10, int(total_dist / 2.0))
-            t_values = [i * total_dist / (num_points - 1) for i in range(num_points)]
-            
-            fitted_path = []
-            for t in t_values:
-                x = float(cs_x(t))
-                y = float(cs_y(t))
+            if success:
+                # 更新可视化
+                self.draw_backbone_network()
                 
-                # 计算朝向
-                if t < total_dist - 0.1:
-                    dx = float(cs_x(t + 0.1, nu=1))
-                    dy = float(cs_y(t + 0.1, nu=1))
-                    theta = math.atan2(dy, dx)
-                else:
-                    theta = key_nodes[-1][2] if len(key_nodes[-1]) > 2 else 0
+                # 获取网络状态
+                network_status = self.backbone_network.get_network_status()
+                path_count = network_status['bidirectional_paths']
                 
-                fitted_path.append((x, y, theta))
-            
-            return fitted_path
-            
+                self.backbone_stats_label.setText(f"路径: {path_count} 条")
+                self.status_label.setText("骨干网络生成成功")
+                
+                QMessageBox.information(self, "成功", 
+                    f"骨干网络生成成功\n双向路径: {path_count} 条")
+            else:
+                self.status_label.setText("生成失败")
+                QMessageBox.critical(self, "错误", "骨干网络生成失败")
+                
         except Exception as e:
-            print(f"     样条拟合失败: {e}")
-            return None
+            self.status_label.setText("生成异常")
+            QMessageBox.critical(self, "错误", f"生成骨干网络失败:\n{str(e)}")
     
-    def _linear_interpolate_keypoints(self, key_nodes: List) -> List:
-        """线性插值关键节点"""
-        path = []
+    def draw_backbone_network(self):
+        """绘制骨干网络和节点"""
+        if not self.backbone_network:
+            return
         
-        for i in range(len(key_nodes) - 1):
-            start = key_nodes[i]
-            end = key_nodes[i + 1]
+        scene = self.graphics_view.scene()
+        
+        # 绘制双向路径
+        for path_id, path_data in self.backbone_network.bidirectional_paths.items():
+            if not path_data.forward_path or len(path_data.forward_path) < 2:
+                continue
             
-            distance = math.sqrt((end[0] - start[0])**2 + (end[1] - start[1])**2)
-            steps = max(3, int(distance / 2.0))
+            # 获取路径负载
+            load_factor = path_data.get_load_factor()
             
-            for j in range(steps + 1):
-                if i > 0 and j == 0:
+            # 根据负载设置颜色
+            if load_factor > 0.8:
+                color = QColor(239, 68, 68)
+                width = 1.0
+            elif load_factor > 0.5:
+                color = QColor(245, 158, 11)
+                width = 1.0
+            else:
+                color = QColor(66, 135, 245)
+                width = 1.0
+            
+            # 创建路径
+            painter_path = QPainterPath()
+            painter_path.moveTo(path_data.forward_path[0][0], path_data.forward_path[0][1])
+            
+            for point in path_data.forward_path[1:]:
+                painter_path.lineTo(point[0], point[1])
+            
+            path_item = QGraphicsPathItem(painter_path)
+            pen = QPen(color, width)
+            pen.setCapStyle(Qt.RoundCap)
+            path_item.setPen(pen)
+            path_item.setZValue(-25)
+            
+            scene.addItem(path_item)
+        
+        # 绘制关键节点（替换原来的接口节点部分）
+        if hasattr(self.backbone_network, 'consolidation_info') and self.backbone_network.consolidation_info:
+            key_nodes = self.backbone_network.consolidation_info.get('key_nodes', {})
+            
+            for i, (node_id, key_node) in enumerate(key_nodes.items()):
+                # 获取位置
+                if hasattr(key_node, 'position'):
+                    x, y = key_node.position[0], key_node.position[1]
+                elif isinstance(key_node, dict) and 'position' in key_node:
+                    x, y = key_node['position'][0], key_node['position'][1]
+                else:
                     continue
                 
-                t = j / steps
-                x = start[0] + t * (end[0] - start[0])
-                y = start[1] + t * (end[1] - start[1])
-                theta = start[2] if len(start) > 2 else 0
+                # 使用路径颜色（可以选择一个默认颜色）
+                color = QColor(66, 135, 245)  # 使用蓝色作为默认
                 
-                path.append((x, y, theta))
-        
-        return path
+                # 创建节点（小圆圈，半径0.5）
+                node_circle = QGraphicsEllipseItem(x-0.5, y-0.5, 1.0, 1.0)
+                node_circle.setBrush(QBrush(QColor(255, 255, 255, 200)))  # 白色半透明
+                node_circle.setPen(QPen(color, 1))
+                node_circle.setZValue(-20)  # 在路径之上
+                
+                scene.addItem(node_circle)
+                
+                # 可选：添加节点编号文本（很小）
+                if i % 2 == 0:  # 每隔一个节点显示编号
+                    text_item = QGraphicsTextItem(str(i))
+                    text_item.setPos(x + 1, y + 1)
+                    text_item.setDefaultTextColor(color)
+                    text_item.setFont(QFont("Arial", 1))
+                    text_item.setZValue(-15)
+                    scene.addItem(text_item)
     
-    def _validate_fitted_path(self, path: List) -> bool:
-        """验证拟合路径 - 增强安全检查"""
-        if not path or len(path) < 2:
-            return False
-        
-        # 密集采样检测 - 每个点都检查，不跳过
-        for point in path:
-            if self._is_point_colliding(point):
-                return False
-        
-        # 额外检查路径段的中间点
-        for i in range(len(path) - 1):
-            # 检查每段路径的中点
-            mid_x = (path[i][0] + path[i+1][0]) / 2
-            mid_y = (path[i][1] + path[i+1][1]) / 2
-            mid_theta = path[i][2] if len(path[i]) > 2 else 0
-            mid_point = (mid_x, mid_y, mid_theta)
-            
-            if self._is_point_colliding(mid_point):
-                return False
-        
-        return True
+    # ==================== 任务管理 ====================
     
-    def _is_point_colliding(self, point: Tuple) -> bool:
-        """检查点碰撞 - 增强碰撞检测"""
-        x, y = int(point[0]), int(point[1])
+    def assign_single_vehicle(self):
+        """分配单个车辆任务"""
+        if not self.vehicle_scheduler or not self.env:
+            return
         
-        # 增大安全区域检查
-        safety_radius = int((self.vehicle_width + self.safety_margin * 2) / 2)
-        
-        for dx in range(-safety_radius, safety_radius + 1):
-            for dy in range(-safety_radius, safety_radius + 1):
-                check_x, check_y = x + dx, y + dy
-                
-                # 边界检查
-                if (check_x < 0 or check_y < 0 or 
-                    check_x >= self.env.width or check_y >= self.env.height):
-                    return True  # 边界外视为碰撞
-                
-                # 障碍物检查
-                if (hasattr(self.env, 'grid') and
-                    self.env.grid[check_x, check_y] == 1):
-                    return True
-                
-                # 如果有obstacle_points，也检查
-                if hasattr(self.env, 'obstacle_points'):
-                    for obs_x, obs_y in self.env.obstacle_points:
-                        if abs(check_x - obs_x) <= 1 and abs(check_y - obs_y) <= 1:
-                            return True
-        
-        return False
-    
-    def _create_refitted_path(self, path_id: str, original_path_obj, 
-                            fitted_path: List, key_nodes: List):
-        """创建重拟合路径对象"""
-        class RefittedBackbonePath:
-            def __init__(self, path_id, original_path_obj, fitted_path, key_nodes):
-                self.path_id = path_id
-                self.forward_path = fitted_path
-                self.reverse_path = list(reversed(fitted_path))
-                self.length = self._calculate_length(fitted_path)
-                self.quality = original_path_obj.quality * 1.05  # 拟合提升质量
-                self.planner_used = 'inheritance_spline_fitting'
-                self.created_time = time.time()
-                self.usage_count = original_path_obj.usage_count
-                self.current_load = 0
-                self.max_capacity = 5
-                
-                # 端点信息
-                self.point_a = original_path_obj.point_a
-                self.point_b = original_path_obj.point_b
-                
-                # 拟合信息
-                self.key_nodes = key_nodes
-                self.key_node_count = len(key_nodes)
-                self.inherited_node_count = getattr(original_path_obj, 'inherited_node_count', 0)
-                self.is_consolidated = True
-                self.consolidation_level = "inheritance_fitted"
-                self.original_path_ids = getattr(original_path_obj, 'original_path_ids', [path_id])
-                self.quality_history = [self.quality]
-                self.last_quality_update = time.time()
-            
-            def get_path(self, from_point_type, from_point_id, to_point_type, to_point_id):
-                if (self.point_a['type'] == from_point_type and self.point_a['id'] == from_point_id and
-                    self.point_b['type'] == to_point_type and self.point_b['id'] == to_point_id):
-                    return self.forward_path
-                elif (self.point_b['type'] == from_point_type and self.point_b['id'] == from_point_id and
-                      self.point_a['type'] == to_point_type and self.point_a['id'] == to_point_id):
-                    return self.reverse_path
-                return None
-            
-            def increment_usage(self):
-                self.usage_count += 1
-            
-            def add_vehicle(self, vehicle_id):
-                self.current_load += 1
-            
-            def remove_vehicle(self, vehicle_id):
-                self.current_load = max(0, self.current_load - 1)
-            
-            def get_load_factor(self):
-                return self.current_load / self.max_capacity
-            
-            def update_quality_history(self, new_quality):
-                self.quality_history.append(new_quality)
-                self.last_quality_update = time.time()
-                if len(self.quality_history) > 20:
-                    self.quality_history = self.quality_history[-10:]
-            
-            def get_average_quality(self):
-                return sum(self.quality_history) / len(self.quality_history) if self.quality_history else self.quality
-            
-            def _calculate_length(self, path):
-                if len(path) < 2:
-                    return 0.0
-                return sum(
-                    math.sqrt((path[i+1][0] - path[i][0])**2 + (path[i+1][1] - path[i][1])**2)
-                    for i in range(len(path) - 1)
-                )
-        
-        return RefittedBackbonePath(path_id, original_path_obj, fitted_path, key_nodes)
-
-class ImprovedBackboneNetworkConsolidator:
-    """改进的骨干网络整合器 - 继承式"""
-    
-    def __init__(self, env, path_planner, config: Dict = None):
-        self.env = env
-        self.path_planner = path_planner
-        
-        # 配置
-        self.config = {
-            'merge_radius': 3.5,
-            'preserve_original_backup': True,
-            'enable_visualization': False
-        }
-        
-        if config:
-            self.config.update(config)
-        
-        # 组件
-        self.detector = NodeInheritanceDetector(self.config['merge_radius'])
-        self.processor = NodeInheritanceProcessor()
-        self.applicator = PathInheritanceApplicator()
-        self.refitter = PathRefitter(env)
-        
-        # 结果存储
-        self.inherited_nodes = {}
-        self.original_paths_backup = {}
-        self.consolidation_stats = {}
-        
-        print(f"继承式骨干网络整合器初始化")
-        print(f"  合并半径: {self.config['merge_radius']}m")
-    
-    def aggressive_consolidate_backbone_network(self, backbone_network):
-            """多轮迭代继承式整合骨干网络"""
-            print(f"\n🚀 开始多轮继承式骨干网络整合...")
-            start_time = time.time()
-            
-            # 备份原始路径
-            if self.config['preserve_original_backup']:
-                self.original_paths_backup = backbone_network.bidirectional_paths.copy()
-            
-            original_count = len(backbone_network.bidirectional_paths)
-            original_node_count = sum(len(p.forward_path) for p in backbone_network.bidirectional_paths.values())
-            print(f"原始网络: {original_count} 条路径, {original_node_count} 个节点")
-            
-            try:
-                # 多轮迭代整合
-                current_paths = backbone_network.bidirectional_paths
-                all_inherited_nodes = {}
-                round_num = 0
-                max_rounds = 5
-                
-                while round_num < max_rounds:
-                    round_num += 1
-                    print(f"\n🔄 第 {round_num} 轮整合:")
-                    
-                    # 检测可合并节点
-                    mergeable_groups = self.detector.detect_mergeable_nodes(current_paths)
-                    
-                    if not mergeable_groups:
-                        print(f"   第 {round_num} 轮无可合并节点，停止迭代")
-                        break
-                    
-                    # 创建继承节点
-                    round_inherited = self.processor.create_inherited_nodes(mergeable_groups)
-                    
-                    # 累积继承节点（添加轮次前缀避免冲突）
-                    for node_id, node in round_inherited.items():
-                        all_inherited_nodes[f"round{round_num}_{node_id}"] = node
-                    
-                    # 应用继承
-                    current_paths = self.applicator.apply_inheritance_to_paths(
-                        current_paths, round_inherited
-                    )
-                    
-                    # 统计本轮效果
-                    current_nodes = sum(len(p.forward_path) for p in current_paths.values())
-                    print(f"   本轮继承节点: {len(round_inherited)}")
-                    print(f"   当前总节点: {current_nodes}")
-                    
-                    # 如果改进很小，提前停止
-                    if len(round_inherited) < 2:
-                        print(f"   改进幅度小，提前停止")
-                        break
-                
-                # 最终路径重拟合
-                if all_inherited_nodes:
-                    print(f"\n🎯 最终路径重拟合...")
-                    final_paths = self.refitter.refit_inherited_paths(current_paths, all_inherited_nodes)
-                else:
-                    print("无继承节点，保持原路径")
-                    final_paths = current_paths
-                
-                # 统计
-                consolidation_time = time.time() - start_time
-                final_node_count = sum(len(p.forward_path) for p in final_paths.values())
-                total_reduction = (original_node_count - final_node_count) / original_node_count if original_node_count > 0 else 0
-                avg_key_nodes = sum(getattr(p, 'key_node_count', 0) for p in final_paths.values()) / len(final_paths) if final_paths else 0
-                
-                self.consolidation_stats = {
-                    'original_paths': original_count,
-                    'consolidated_paths': len(final_paths),
-                    'original_nodes': original_node_count,
-                    'consolidated_nodes': final_node_count,
-                    'total_inherited_nodes': len(all_inherited_nodes),
-                    'consolidation_rounds': round_num,
-                    'node_reduction_ratio': total_reduction,
-                    'average_key_nodes_per_path': avg_key_nodes,
-                    'consolidation_time': consolidation_time
-                }
-                
-                print(f"\n🎉 多轮继承式整合完成!")
-                print(f"  整合轮数: {round_num}")
-                print(f"  总继承节点: {len(all_inherited_nodes)}")
-                print(f"  节点压缩: {original_node_count} → {final_node_count} ({total_reduction:.1%})")
-                print(f"  整合耗时: {consolidation_time:.2f}s")
-                
-                self.inherited_nodes = all_inherited_nodes
-                self.rebuilt_paths = final_paths
-                return self._create_mock_topology(final_paths, all_inherited_nodes)
-            
-            except Exception as e:
-                print(f"❌ 多轮继承式整合失败: {e}")
-                return None
-    
-    def _create_mock_topology(self, paths: Dict, inherited_nodes: Dict):
-        """创建模拟拓扑网络"""
-        class MockTopologyNetwork:
-            def __init__(self, paths, inherited_nodes):
-                self.key_nodes = inherited_nodes
-                self.backbone_segments = {}
-                self.branch_paths = {}
-                self.final_backbone_paths = paths
-            
-            def get_network_summary(self):
-                return {
-                    'key_nodes': len(self.key_nodes),
-                    'backbone_segments': len(self.backbone_segments),
-                    'branch_paths': len(self.branch_paths),
-                    'final_backbone_paths': len(self.final_backbone_paths)
-                }
-        
-        return MockTopologyNetwork(paths, inherited_nodes)
-    
-    def apply_to_backbone_network(self, backbone_network):
-        """应用继承结果"""
-        if hasattr(self, 'rebuilt_paths') and self.rebuilt_paths:
-            backbone_network.bidirectional_paths = self.rebuilt_paths
-            
-            backbone_network.consolidation_info = {
-                'is_consolidated': True,
-                'consolidation_type': 'node_inheritance',
-                'consolidation_stats': self.consolidation_stats,
-                'inherited_nodes': self.inherited_nodes
-            }
-            
-            if hasattr(backbone_network, '_build_connection_index'):
-                backbone_network._build_connection_index()
-            
-            return True
-        return False
-    
-    def restore_original_network(self, backbone_network):
-        """恢复原始网络"""
-        if not self.original_paths_backup:
-            return False
+        # 获取优先级
+        priority_map = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5}
+        priority_index = self.priority_combo.currentIndex()
+        priority_value = priority_map[priority_index]
         
         try:
-            backbone_network.bidirectional_paths = self.original_paths_backup.copy()
+            priority = TaskPriority(priority_value)
             
-            if hasattr(backbone_network, 'consolidation_info'):
-                delattr(backbone_network, 'consolidation_info')
-            
-            if hasattr(backbone_network, '_build_connection_index'):
-                backbone_network._build_connection_index()
-            
-            return True
-        except:
-            return False
+            # 选择随机位置
+            if self.env.loading_points and self.env.unloading_points:
+                import random
+                start_location = random.choice(self.env.loading_points)
+                end_location = random.choice(self.env.unloading_points)
+                
+                # 创建任务
+                task_id = self.vehicle_scheduler.create_transport_task(
+                    start_location=start_location,
+                    end_location=end_location,
+                    priority=priority
+                )
+                
+                # 分配任务
+                success = self.vehicle_scheduler.assign_task(task_id)
+                
+                if success:
+                    self.status_label.setText(f"任务分配成功: {task_id}")
+                else:
+                    QMessageBox.information(self, "提示", "没有找到合适的车辆")
+            else:
+                QMessageBox.warning(self, "警告", "没有可用的装载点或卸载点")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"任务分配失败: {str(e)}")
     
-    def get_consolidation_stats(self):
-        """获取整合统计"""
-        return self.consolidation_stats.copy()
+    def assign_all_vehicles(self):
+        """批量分配任务"""
+        if not self.vehicle_scheduler or not self.env:
+            return
+        
+        priority_map = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5}
+        priority_index = self.priority_combo.currentIndex()
+        priority_value = priority_map[priority_index]
+        
+        try:
+            priority = TaskPriority(priority_value)
+            assigned_count = 0
+            
+            if self.env.loading_points and self.env.unloading_points:
+                import random
+                
+                for vehicle_id in self.env.vehicles.keys():
+                    start_location = random.choice(self.env.loading_points)
+                    end_location = random.choice(self.env.unloading_points)
+                    
+                    # 创建任务
+                    task_id = self.vehicle_scheduler.create_transport_task(
+                        start_location=start_location,
+                        end_location=end_location,
+                        priority=priority,
+                        vehicle_id=vehicle_id
+                    )
+                    
+                    # 分配任务
+                    success = self.vehicle_scheduler.assign_task(task_id, vehicle_id)
+                    
+                    if success:
+                        assigned_count += 1
+                
+                self.status_label.setText(f"批量分配完成: {assigned_count}个任务")
+                
+                QMessageBox.information(self, "批量分配成功", 
+                    f"已为 {assigned_count} 个车辆分配任务")
+            else:
+                QMessageBox.warning(self, "警告", "没有可用的装载点或卸载点")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"批量任务分配失败: {str(e)}")
+    
+    def create_batch_tasks(self):
+        """创建批量任务（支持随机循环）"""
+        if not self.vehicle_scheduler or not self.env:
+            QMessageBox.warning(self, "警告", "请先加载环境")
+            return
+        
+        try:
+            vehicle_count = self.batch_task_widget.vehicle_count_spin.value()
+            priority_index = self.batch_task_widget.priority_combo.currentIndex()
+            task_mode = self.batch_task_widget.task_mode_combo.currentText()
+            
+            priority_map = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5}
+            from vehicle_scheduler import TaskPriority
+            priority = TaskPriority(priority_map[priority_index])
+            
+            created_count = 0
+            created_task_ids = []
+            
+            available_vehicles = list(self.env.vehicles.keys())[:vehicle_count]
+            
+            print(f"\n🎯 创建批量任务: {task_mode}")
+            print(f"   车辆数量: {len(available_vehicles)}")
+            print(f"   优先级: {priority.name}")
+            
+            for vehicle_id in available_vehicles:
+                task_id = None
+                
+                if task_mode == "装载→卸载→停车":
+                    task_id = self._create_load_unload_park_task(vehicle_id, priority)
+                    
+                elif task_mode == "装载→卸载":
+                    task_id = self._create_load_unload_task(vehicle_id, priority)
+                    
+                elif task_mode == "随机循环":
+                    # 处理随机循环任务
+                    task_id = self._create_random_cycle_task(vehicle_id, priority)
+                    
+                elif task_mode == "只装载":
+                    task_id = self._create_loading_only_task(vehicle_id, priority)
+                    
+                elif task_mode == "只卸载":
+                    task_id = self._create_unloading_only_task(vehicle_id, priority)
+                
+                if task_id:
+                    created_count += 1
+                    created_task_ids.append(task_id)
+                    print(f"✅ 创建任务 {task_id} 给车辆 {vehicle_id} ({task_mode})")
+            
+            print(f"\n📊 批量任务创建总结:")
+            print(f"   成功创建: {created_count} 个任务")
+            print(f"   任务模式: {task_mode}")
+            print(f"   任务ID列表: {created_task_ids}")
+            
+            QMessageBox.information(self, "批量任务创建", 
+                f"成功创建 {created_count} 个 {task_mode} 任务\n"
+                f"任务ID: {', '.join(created_task_ids[:3])}{'...' if len(created_task_ids) > 3 else ''}")
+            
+        except Exception as e:
+            print(f"❌ 批量任务创建失败: {e}")
+            QMessageBox.critical(self, "错误", f"批量任务创建失败: {str(e)}")
 
-# 兼容性接口
-def aggressive_consolidate_backbone_network(backbone_network, env, path_planner,
-                                          cluster_radius=3.5, distance_threshold=2.0,
-                                          apply_immediately=True, visualize=False):
-    """兼容性接口"""
-    config = {
-        'merge_radius': cluster_radius,
-        'preserve_original_backup': True
-    }
-    
-    consolidator = ImprovedBackboneNetworkConsolidator(env, path_planner, config)
-    topology_network = consolidator.aggressive_consolidate_backbone_network(backbone_network)
-    
-    if apply_immediately and topology_network:
-        success = consolidator.apply_to_backbone_network(backbone_network)
-        if success:
-            print("✅ 继承式整合完成并已应用")
+
+
+    def _create_random_cycle_task(self, vehicle_id: str, priority) -> Optional[str]:
+        """创建随机循环任务"""
+        try:
+            print(f"   🔄 创建随机循环任务给车辆 {vehicle_id}")
+            
+            # 获取车辆当前位置作为起点
+            vehicle_info = self.env.vehicles.get(vehicle_id)
+            if not vehicle_info:
+                print(f"   ❌ 找不到车辆信息: {vehicle_id}")
+                return None
+            
+            if hasattr(vehicle_info, 'position'):
+                start_position = vehicle_info.position
+            else:
+                start_position = vehicle_info.get('position', (0, 0, 0))
+            
+            # 确保位置是3D坐标
+            if len(start_position) < 3:
+                start_position = (*start_position, 0.0)
+            
+            print(f"     起点位置: ({start_position[0]:.1f}, {start_position[1]:.1f})")
+            
+            # 随机选择装载点
+            if not self.env.loading_points:
+                print(f"   ❌ 没有可用的装载点")
+                return None
+            
+            import random
+            loading_point = random.choice(self.env.loading_points)
+            loading_location = self._ensure_3d_point(loading_point)
+            print(f"     随机装载点: ({loading_location[0]:.1f}, {loading_location[1]:.1f})")
+            
+            # 随机选择卸载点
+            if not self.env.unloading_points:
+                print(f"   ❌ 没有可用的卸载点")
+                return None
+            
+            unloading_point = random.choice(self.env.unloading_points)
+            unloading_location = self._ensure_3d_point(unloading_point)
+            print(f"     随机卸载点: ({unloading_location[0]:.1f}, {unloading_location[1]:.1f})")
+            
+            # 随机选择停车点
+            parking_areas = getattr(self.env, 'parking_areas', [])
+            if not parking_areas:
+                # 如果没有专门的停车区，使用装载点附近作为停车点
+                parking_location = self._generate_parking_near_loading(loading_location)
+                print(f"     生成停车点: ({parking_location[0]:.1f}, {parking_location[1]:.1f})")
+            else:
+                parking_point = random.choice(parking_areas)
+                parking_location = self._ensure_3d_point(parking_point)
+                print(f"     随机停车点: ({parking_location[0]:.1f}, {parking_location[1]:.1f})")
+            
+            # 使用调度器创建4阶段循环任务
+            if hasattr(self.vehicle_scheduler, 'create_random_cycle_task'):
+                task_id = self.vehicle_scheduler.create_random_cycle_task(
+                    vehicle_id=vehicle_id,
+                    start_location=start_position,
+                    loading_location=loading_location,
+                    unloading_location=unloading_location,
+                    parking_location=parking_location,
+                    priority=priority,
+                    enable_cycle=True  # 启用循环
+                )
+            else:
+                # 如果调度器没有随机循环方法，使用传统方法创建多阶段任务
+                print(f"   ⚠️ 调度器不支持随机循环，使用传统多阶段任务")
+                task_id = self.vehicle_scheduler.create_transport_task_integrated(
+                    start_location=loading_location,
+                    end_location=parking_location,
+                    priority=priority,
+                    vehicle_id=vehicle_id
+                )
+            
+            if task_id:
+                print(f"     ✅ 随机循环任务创建成功: {task_id}")
+                return task_id
+            else:
+                print(f"     ❌ 随机循环任务创建失败")
+                return None
+                
+        except Exception as e:
+            print(f"   ❌ 创建随机循环任务异常: {e}")
+            return None
+
+    def _create_load_unload_park_task(self, vehicle_id: str, priority) -> Optional[str]:
+        """创建装载→卸载→停车任务"""
+        try:
+            if self.env.loading_points and self.env.unloading_points:
+                import random
+                start_location = random.choice(self.env.loading_points)
+                end_location = random.choice(self.env.unloading_points)
+                
+                task_id = self.vehicle_scheduler.create_transport_task_integrated(
+                    start_location=start_location,
+                    end_location=end_location,
+                    priority=priority,
+                    vehicle_id=vehicle_id
+                )
+                return task_id
+        except Exception as e:
+            print(f"   ❌ 创建装载→卸载→停车任务失败: {e}")
+        return None
+
+    def _create_load_unload_task(self, vehicle_id: str, priority) -> Optional[str]:
+        """创建装载→卸载任务"""
+        try:
+            if self.env.loading_points and self.env.unloading_points:
+                import random
+                start_location = random.choice(self.env.loading_points)
+                end_location = random.choice(self.env.unloading_points)
+                
+                # 使用现有的任务创建方法
+                task_id = self.vehicle_scheduler.create_transport_task(
+                    start_location=start_location,
+                    end_location=end_location,
+                    priority=priority,
+                    vehicle_id=vehicle_id
+                )
+                return task_id
+        except Exception as e:
+            print(f"   ❌ 创建装载→卸载任务失败: {e}")
+        return None
+
+    def _create_loading_only_task(self, vehicle_id: str, priority) -> Optional[str]:
+        """创建只装载任务"""
+        try:
+            if self.env.loading_points:
+                import random
+                # 获取车辆当前位置
+                vehicle_info = self.env.vehicles.get(vehicle_id)
+                if vehicle_info:
+                    if hasattr(vehicle_info, 'position'):
+                        start_pos = vehicle_info.position
+                    else:
+                        start_pos = vehicle_info.get('position', (0, 0, 0))
+                else:
+                    start_pos = (0, 0, 0)
+                
+                loading_location = random.choice(self.env.loading_points)
+                
+                # 使用现有方法创建简单任务
+                task_id = self.vehicle_scheduler.create_transport_task(
+                    start_location=start_pos,
+                    end_location=loading_location,
+                    priority=priority,
+                    vehicle_id=vehicle_id
+                )
+                return task_id
+        except Exception as e:
+            print(f"   ❌ 创建只装载任务失败: {e}")
+        return None
+
+    def _create_unloading_only_task(self, vehicle_id: str, priority) -> Optional[str]:
+        """创建只卸载任务"""
+        try:
+            if self.env.unloading_points:
+                import random
+                # 获取车辆当前位置
+                vehicle_info = self.env.vehicles.get(vehicle_id)
+                if vehicle_info:
+                    if hasattr(vehicle_info, 'position'):
+                        start_pos = vehicle_info.position
+                    else:
+                        start_pos = vehicle_info.get('position', (0, 0, 0))
+                else:
+                    start_pos = (0, 0, 0)
+                
+                unloading_location = random.choice(self.env.unloading_points)
+                
+                # 使用现有方法创建简单任务
+                task_id = self.vehicle_scheduler.create_transport_task(
+                    start_location=start_pos,
+                    end_location=unloading_location,
+                    priority=priority,
+                    vehicle_id=vehicle_id
+                )
+                return task_id
+        except Exception as e:
+            print(f"   ❌ 创建只卸载任务失败: {e}")
+        return None
+
+    def _ensure_3d_point(self, point) -> Tuple[float, float, float]:
+        """确保点坐标为3D"""
+        if not point:
+            return (0.0, 0.0, 0.0)
+        elif len(point) >= 3:
+            return (float(point[0]), float(point[1]), float(point[2]))
+        elif len(point) == 2:
+            return (float(point[0]), float(point[1]), 0.0)
         else:
-            print("❌ 应用继承结果失败")
-    
-    return consolidator
+            return (0.0, 0.0, 0.0)
 
-AggressiveBackboneNetworkConsolidator = ImprovedBackboneNetworkConsolidator
+    def _generate_parking_near_loading(self, loading_location: Tuple) -> Tuple[float, float, float]:
+        """在装载点附近生成停车位置"""
+        import random
+        x, y, z = loading_location
+        # 在装载点附近10-20米范围内生成随机停车位
+        offset_x = random.uniform(-20, 20)
+        offset_y = random.uniform(-20, 20)
+        return (x + offset_x, y + offset_y, z)
+    
+    def assign_all_batch_tasks(self):
+        """分配所有批量任务"""
+        if not self.vehicle_scheduler:
+            return
+        
+        try:
+            # 获取所有待分配任务
+            assigned_count = 0
+            while self.vehicle_scheduler.task_queue:
+                task_id = self.vehicle_scheduler.task_queue.popleft()
+                if self.vehicle_scheduler.assign_task(task_id):
+                    assigned_count += 1
+                else:
+                    # 重新排队
+                    self.vehicle_scheduler.task_queue.append(task_id)
+                    break
+            
+            QMessageBox.information(self, "批量分配完成", 
+                f"成功分配 {assigned_count} 个任务")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"批量分配失败: {str(e)}")
+    
+    def clear_all_tasks(self):
+        """清除所有任务"""
+        if not self.vehicle_scheduler:
+            return
+        
+        try:
+            # 清除任务队列
+            self.vehicle_scheduler.task_queue.clear()
+            
+            # 清除车辆任务
+            for vehicle_state in self.vehicle_scheduler.vehicle_states.values():
+                vehicle_state.current_task_id = None
+                vehicle_state.task_queue.clear()
+                vehicle_state.current_status = VehicleStatus.IDLE
+            
+            QMessageBox.information(self, "清除完成", "所有任务已清除")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"清除任务失败: {str(e)}")
+    
+    # ==================== 冲突控制 ====================
+    
+    def detect_conflicts(self):
+        """检测冲突"""
+        if not self.conflict_detector:
+            return
+        
+        try:
+            conflicts = self.conflict_detector.detect_backbone_conflicts()
+            
+            if conflicts:
+                QMessageBox.information(self, "冲突检测", 
+                    f"检测到 {len(conflicts)} 个冲突")
+            else:
+                QMessageBox.information(self, "冲突检测", "未检测到冲突")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"冲突检测失败: {str(e)}")
+    
+    def resolve_all_conflicts(self):
+        """解决所有冲突"""
+        if not self.traffic_manager:
+            return
+        
+        try:
+            conflicts = self.conflict_detector.get_active_conflicts()
+            
+            if not conflicts:
+                QMessageBox.information(self, "提示", "当前没有活跃冲突")
+                return
+            
+            self.status_label.setText("正在解决冲突...")
+            
+            # 处理冲突
+            results = self.traffic_manager.process_conflicts(conflicts)
+            
+            success_count = sum(1 for result in results.values() 
+                              if result.value == 'success')
+            
+            QMessageBox.information(self, "冲突解决完成", 
+                f"尝试解决 {len(conflicts)} 个冲突\n"
+                f"成功解决 {success_count} 个")
+            
+            self.status_label.setText("冲突解决完成")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"解决冲突失败: {str(e)}")
+    
+    def emergency_clear_conflicts(self):
+        """紧急清除冲突"""
+        if not self.traffic_manager:
+            return
+        
+        reply = QMessageBox.question(
+            self, '确认紧急操作',
+            '这将让所有车辆紧急停车并清除所有冲突\n确定要执行吗？',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                self.traffic_manager.emergency_clear_all_conflicts()
+                QMessageBox.information(self, "紧急操作完成", "所有冲突已清除")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"紧急清除失败: {str(e)}")
+    
+    # ==================== 仿真控制 ====================
+    
+    def start_simulation(self):
+        """开始仿真"""
+        if not self.env:
+            return
+        
+        self.is_simulating = True
+        self.start_btn.setEnabled(False)
+        self.pause_btn.setEnabled(True)
+        
+        # 启动定时器
+        interval = max(50, int(100 / self.simulation_speed))
+        self.sim_timer.start(interval)
+        
+        self.status_label.setText("仿真运行中...")
+    
+    def pause_simulation(self):
+        """暂停仿真"""
+        self.is_simulating = False
+        self.start_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
+        
+        self.sim_timer.stop()
+        self.status_label.setText("仿真已暂停")
+    
+    def reset_simulation(self):
+        """重置仿真"""
+        if self.is_simulating:
+            self.pause_simulation()
+        
+        if self.env:
+            self.env.reset()
+        
+        if self.vehicle_scheduler:
+            self.vehicle_scheduler.initialize_vehicles()
+        
+        self.simulation_time = 0
+        self.progress_bar.setValue(0)
+        
+        self.status_label.setText("仿真已重置")
+    
+    def simulation_step(self):
+        """仿真步骤（修复版）"""
+        if not self.is_simulating or not self.env:
+            return
+        
+        time_step = 0.5 * self.simulation_speed
+        self.simulation_time += time_step
+        
+        # 更新环境
+        self.env.current_time = self.simulation_time
+        
+        # 更新车辆位置（修复版）
+        self.update_vehicle_positions_fixed(time_step)
+        
+        # 更新调度器
+        if self.vehicle_scheduler:
+            try:
+                self.vehicle_scheduler.update(time_step)
+            except Exception as e:
+                print(f"调度器更新错误: {e}")
+        
+        # 更新交通管理器
+        if self.traffic_manager:
+            try:
+                self.traffic_manager.update(time_step)
+            except Exception as e:
+                print(f"交通管理器更新错误: {e}")
+        
+        # 更新进度条
+        max_time = 1800  # 30分钟
+        progress = min(100, int(self.simulation_time * 100 / max_time))
+        self.progress_bar.setValue(progress)
+        
+        # 更新时间显示
+        minutes = int(self.simulation_time // 60)
+        seconds = int(self.simulation_time % 60)
+        self.sim_time_label.setText(f"时间: {minutes:02d}:{seconds:02d}")
+        
+        if progress >= 100:
+            self.pause_simulation()
+            QMessageBox.information(self, "完成", "仿真已完成！")
+    
+    def update_vehicle_positions_fixed(self, time_step):
+        """更新车辆位置，让车辆沿路径移动（修复版）"""
+        if not self.vehicle_scheduler:
+            return
+        
+        for vehicle_id, vehicle_state in self.vehicle_scheduler.vehicle_states.items():
+            if not vehicle_state.current_task_id:
+                continue
+            
+            task = self.vehicle_scheduler.tasks.get(vehicle_state.current_task_id)
+            if not task or not task.complete_path or len(task.complete_path) < 2:
+                continue
+            
+            # 修复1: 验证任务归属权
+            if task.vehicle_id != vehicle_id:
+                if self.debug_mode:
+                    print(f"⚠️ 任务归属错误: {task.task_id} 属于车辆 {task.vehicle_id}，但被车辆 {vehicle_id} 引用")
+                vehicle_state.current_task_id = None
+                continue
+            
+            # 修复2: 检查任务状态 - 使用正确的枚举引用
+            if task.status == TaskStatus.COMPLETED:
+                # 任务已完成，清理车辆状态
+                vehicle_state.current_task_id = None
+                vehicle_state.current_status = VehicleStatus.IDLE
+                continue
+            
+            # 修复3: 检查车辆状态 - 紧急停车时不移动
+            if vehicle_state.current_status == VehicleStatus.WAITING:
+                # 车辆处于等待状态（紧急停车），跳过移动
+                if self.debug_mode:
+                    print(f"🛑 车辆 {vehicle_id} 紧急停车中，暂停移动")
+                continue
+            
+            # 修复4: 检查任务状态 - 暂停任务时不移动
+            if task.status == TaskStatus.SUSPENDED:
+                # 任务被暂停，车辆不移动
+                if self.debug_mode:
+                    print(f"⏸️ 车辆 {vehicle_id} 任务已暂停，停止移动")
+                continue
+            
+            # 计算车辆应该移动的距离
+            speed = vehicle_state.max_speed
+            distance_to_move = speed * time_step
+            
+            # 获取当前进度
+            if not hasattr(task, 'path_progress'):
+                task.path_progress = 0.0
+                task.current_path_index = 0
+            
+            # 沿路径移动
+            new_position = self.move_along_path(
+                task.complete_path, 
+                task.path_progress, 
+                distance_to_move
+            )
+            
+            if new_position:
+                # 更新任务进度
+                task.path_progress = new_position['progress']
+                task.current_path_index = new_position['index']
+                
+                # 更新车辆位置
+                vehicle_state.update_position(new_position['position'], time_step)
+                
+                # 更新环境中的车辆位置
+                if vehicle_id in self.env.vehicles:
+                    env_vehicle = self.env.vehicles[vehicle_id]
+                    if hasattr(env_vehicle, 'position'):
+                        env_vehicle.position = new_position['position']
+                    elif hasattr(env_vehicle, '__setitem__'):
+                        env_vehicle['position'] = new_position['position']
+                
+                # 修复3: 使用安全的任务完成处理
+                if task.path_progress >= 1.0:
+                    self._handle_task_completion_safely(vehicle_id, task)
+
+    
+    def _handle_task_completion_safely(self, vehicle_id: str, task):
+        """安全地处理任务完成（修复版）"""
+        print(f"\n🔄 处理任务完成: 车辆 {vehicle_id}, 任务 {task.task_id}")
+        
+        # 双重检查任务状态和归属
+        if (task.status != TaskStatus.COMPLETED and 
+            task.vehicle_id == vehicle_id and
+            task.path_progress >= 1.0):
+            
+            print(f"   进度: {task.path_progress:.2f}")
+            print(f"   当前阶段: {task.current_stage_index}/{len(task.stages)}")
+            
+            # 检查是否是多阶段任务
+            if hasattr(task, 'advance_to_next_stage') and not task.is_complete():
+                print(f"   推进到下一阶段...")
+                
+                # 推进到下一阶段
+                success = self.vehicle_scheduler.advance_task_stage(task.task_id)
+                if success:
+                    print(f"   ✅ 阶段推进成功")
+                else:
+                    print(f"   ❌ 阶段推进失败")
+            else:
+                print(f"   任务完全完成")
+                # 任务真正完成
+                task.status = TaskStatus.COMPLETED
+                task.completion_time = time.time()
+                
+                # 更新车辆状态
+                vehicle_state = self.vehicle_scheduler.vehicle_states.get(vehicle_id)
+                if vehicle_state:
+                    vehicle_state.current_task_id = None
+                    vehicle_state.current_status = VehicleStatus.IDLE
+                    vehicle_state.total_tasks_completed += 1
+                
+                # 释放骨干网络资源
+                if self.backbone_network:
+                    self.backbone_network.release_vehicle_from_path(vehicle_id)
+                
+                # 更新统计
+                self.vehicle_scheduler.stats['total_tasks_completed'] += 1
+                
+                print(f"   🎉 车辆 {vehicle_id} 完成任务 {task.task_id}")
+    def move_along_path(self, path, current_progress, distance_to_move):
+        """沿路径移动指定距离"""
+        if not path or len(path) < 2:
+            return None
+        
+        # 计算总路径长度
+        total_length = 0
+        segment_lengths = []
+        for i in range(len(path) - 1):
+            p1, p2 = path[i], path[i + 1]
+            length = math.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
+            segment_lengths.append(length)
+            total_length += length
+        
+        if total_length == 0:
+            return None
+        
+        # 当前位置（基于进度）
+        current_distance = current_progress * total_length
+        new_distance = min(total_length, current_distance + distance_to_move)
+        new_progress = new_distance / total_length
+        
+        # 找到新位置在哪个路径段
+        accumulated_length = 0
+        for i, segment_length in enumerate(segment_lengths):
+            if accumulated_length + segment_length >= new_distance:
+                # 在第i段中
+                segment_progress = (new_distance - accumulated_length) / segment_length
+                
+                # 插值计算位置
+                p1, p2 = path[i], path[i + 1]
+                x = p1[0] + segment_progress * (p2[0] - p1[0])
+                y = p1[1] + segment_progress * (p2[1] - p1[1])
+                
+                # 计算朝向
+                if len(p1) > 2:
+                    theta = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+                else:
+                    theta = 0.0
+                
+                return {
+                    'position': (x, y, theta),
+                    'progress': new_progress,
+                    'index': i
+                }
+            
+            accumulated_length += segment_length
+        
+        # 到达终点
+        final_point = path[-1]
+        return {
+            'position': final_point,
+            'progress': 1.0,
+            'index': len(path) - 1
+        }
+    
+    def update_simulation_speed(self, value):
+        """更新仿真速度"""
+        self.simulation_speed = value / 50.0
+        self.speed_label.setText(f"{self.simulation_speed:.1f}x")
+        
+        # 更新定时器间隔
+        if self.is_simulating:
+            interval = max(50, int(100 / self.simulation_speed))
+            self.sim_timer.start(interval)
+    
+    # ==================== 显示更新 ====================
+    
+    def update_display(self):
+        """更新显示"""
+        if not self.env:
+            return
+        
+        # 更新车辆显示
+        self.update_vehicles_display()
+    
+    def update_vehicles_display(self):
+        """更新车辆显示"""
+        scene = self.graphics_view.scene()
+        
+        # 清除旧的车辆路径
+        for item in scene.items():
+            if hasattr(item, 'item_type') and item.item_type == 'vehicle_path':
+                scene.removeItem(item)
+        
+        # 找到现有车辆项
+        vehicle_items = {}
+        for item in scene.items():
+            if isinstance(item, EnhancedVehicleGraphicsItem):
+                vehicle_items[item.vehicle_id] = item
+        
+        # 更新或添加车辆
+        for vehicle_id, vehicle_info in self.env.vehicles.items():
+            vehicle_data = self.create_enhanced_vehicle_data(vehicle_id, vehicle_info)
+            
+            if vehicle_id in vehicle_items:
+                vehicle_items[vehicle_id].update_data(vehicle_data)
+            else:
+                vehicle_item = EnhancedVehicleGraphicsItem(vehicle_id, vehicle_data)
+                scene.addItem(vehicle_item)
+            
+            # 重新绘制车辆路径
+            self.draw_vehicle_path(vehicle_id)
+    
+    def update_statistics(self):
+        """更新统计信息"""
+        # 更新冲突控制显示
+        self.conflict_widget.update_display()
+        
+        # 更新批量任务显示
+        self.batch_task_widget.update_display()
+        
+        # 更新状态栏
+        if self.conflict_detector:
+            try:
+                conflicts = self.conflict_detector.get_active_conflicts()
+                self.conflicts_label.setText(f"冲突: {len(conflicts)}")
+            except:
+                pass
+    
+    def enable_controls(self, enabled):
+        """启用/禁用控件"""
+        self.start_btn.setEnabled(enabled)
+        self.reset_btn.setEnabled(enabled)
+        self.generate_btn.setEnabled(enabled)
+        self.assign_single_btn.setEnabled(enabled)
+        self.assign_all_btn.setEnabled(enabled)
+        self.save_btn.setEnabled(enabled)
+    
+    def save_environment(self):
+        """保存环境"""
+        if not self.env:
+            QMessageBox.warning(self, "警告", "没有可保存的环境")
+            return
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "保存环境", 
+            f"enhanced_mine_env_{time.strftime('%Y%m%d_%H%M%S')}.json",
+            "JSON文件 (*.json);;所有文件 (*)"
+        )
+        
+        if file_path:
+            try:
+                if self.env.save_to_file(file_path):
+                    self.status_label.setText("环境保存成功")
+                    QMessageBox.information(self, "成功", "环境保存成功")
+                else:
+                    raise Exception("保存失败")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"保存失败:\n{str(e)}")
+    
+    def closeEvent(self, event):
+        """关闭事件"""
+        if self.is_simulating:
+            reply = QMessageBox.question(
+                self, '确认退出',
+                '仿真正在运行，确定要退出吗？',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.No:
+                event.ignore()
+                return
+        
+        # 停止所有定时器
+        self.update_timer.stop()
+        self.sim_timer.stop()
+        self.stats_timer.stop()
+        
+        # 关闭系统组件
+        try:
+            if self.vehicle_scheduler:
+                self.vehicle_scheduler.shutdown()
+            if self.traffic_manager:
+                self.traffic_manager.shutdown()
+        except Exception as e:
+            print(f"组件关闭错误: {e}")
+        
+        event.accept()
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    app.setApplicationName("露天矿多车协同调度系统 - 修复调试版")
+    app.setApplicationVersion("2.1.0")
+    
+    # 设置全局样式
+    app.setStyleSheet(f"""
+        QApplication {{
+            font-family: "Microsoft YaHei", "SimHei", Arial, sans-serif;
+            font-size: 9pt;
+        }}
+        QMainWindow {{
+            background-color: {PROFESSIONAL_COLORS['background'].name()};
+        }}
+        QToolTip {{
+            background-color: {PROFESSIONAL_COLORS['surface'].name()};
+            color: {PROFESSIONAL_COLORS['text'].name()};
+            border: 1px solid {PROFESSIONAL_COLORS['border'].name()};
+            padding: 4px;
+            border-radius: 4px;
+        }}
+    """)
+    
+    try:
+        main_window = EnhancedMineGUI()
+        main_window.show()
+        
+        print("🚀 修复版露天矿调度系统启动成功")
+        print("✨ 修复功能: 任务归属验证、冲突检测、调试工具")
+        print("📞 调试快捷键: F12-冲突系统, Ctrl+F12-任务分配, Shift+F12-路径占用")
+        
+        sys.exit(app.exec_())
+        
+    except Exception as e:
+        print(f"❌ 应用程序启动失败: {e}")
+        sys.exit(1)

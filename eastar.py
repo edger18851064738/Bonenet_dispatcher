@@ -365,7 +365,7 @@ class HybridAStarPlanner:
     
     def plan_path(self, start, goal, agent_id=None, max_iterations=None, 
                   quality_threshold=0.7, use_cache=True):
-        """规划路径 - 保持原接口，增加长距离优化"""
+        """规划路径 - 保持原接口，移除长距离优化"""
         start_time = time.time()
         
         # 输入验证
@@ -379,24 +379,9 @@ class HybridAStarPlanner:
                 self.stats['cache_hits'] += 1
                 return cached_path
         
-        # 计算距离，判断是否为长距离规划
-        distance = math.sqrt((goal[0] - start[0])**2 + (goal[1] - start[1])**2)
-        is_long_distance = distance > min(self.env.width, self.env.height) * 0.7
-        
         if self.debug:
-            print(f"开始露天矿优化规划: {start} -> {goal}, 距离: {distance:.1f}, 长距离模式: {is_long_distance}")
-        
-        # 长距离规划使用分层策略
-        if is_long_distance:
-            result = self._plan_long_distance_path(start, goal, agent_id, quality_threshold)
-            if result:
-                if use_cache:
-                    self._add_to_cache(start, goal, result)
-                self.stats['planning_time'] = time.time() - start_time
-                self.stats['path_length'] = len(result)
-                return result
-            # 长距离失败后尝试标准方法
-            print("  长距离规划失败，尝试标准方法...")
+            distance = math.sqrt((goal[0] - start[0])**2 + (goal[1] - start[1])**2)
+            print(f"开始露天矿规划: {start} -> {goal}, 距离: {distance:.1f}")
         
         # 标准规划流程
         # 重置规划器状态
@@ -411,9 +396,9 @@ class HybridAStarPlanner:
         # 初始化地图数据
         self._init_map_data()
         
-        # 计算启发式地图（针对长距离优化）
+        # 计算启发式地图
         h_start_time = time.time()
-        heuristic_success = self._calc_heuristic_map_optimized(goal, is_long_distance)
+        heuristic_success = self._calc_heuristic_map_optimized(goal)
         self.stats['h_map_calc_time'] = time.time() - h_start_time
         
         if not heuristic_success:
@@ -422,12 +407,8 @@ class HybridAStarPlanner:
             # 启发式失败时使用简化方法
             return self._fallback_simple_planning(start, goal)
         
-        # 执行A*搜索（动态调整参数）
-        adjusted_iterations = max_iterations
-        if is_long_distance and max_iterations is None:
-            adjusted_iterations = min(15000, self.config['max_iterations'] * 2)
-        
-        final_path = self._astar_search_adaptive(start, goal, adjusted_iterations, is_long_distance)
+        # 执行A*搜索
+        final_path = self._astar_search_adaptive(start, goal, max_iterations)
         
         if final_path:
             # 露天矿适配的路径后处理
@@ -455,342 +436,6 @@ class HybridAStarPlanner:
         if self.debug:
             print("标准方法失败，尝试最终回退策略")
         return self._final_fallback_planning(start, goal)
-    
-    def _plan_long_distance_path(self, start, goal, agent_id, quality_threshold):
-        """长距离路径规划策略"""
-        try:
-            print("  使用长距离分层规划策略...")
-            
-            # 策略1: 分段规划
-            segmented_path = self._segmented_planning(start, goal)
-            if segmented_path:
-                quality = self._mining_quality_evaluation(segmented_path, start, goal)
-                if quality >= quality_threshold * 0.8:  # 稍微放宽要求
-                    print(f"  ✅ 分段规划成功, 质量: {quality:.2f}")
-                    return segmented_path
-            
-            # 策略2: 简化参数重试
-            simplified_path = self._simplified_parameter_planning(start, goal)
-            if simplified_path:
-                quality = self._mining_quality_evaluation(simplified_path, start, goal)
-                if quality >= quality_threshold * 0.7:  # 进一步放宽
-                    print(f"  ✅ 简化参数规划成功, 质量: {quality:.2f}")
-                    return simplified_path
-            
-            return None
-            
-        except Exception as e:
-            print(f"  长距离规划异常: {e}")
-            return None
-    
-    def _segmented_planning(self, start, goal):
-        """分段路径规划"""
-        try:
-            # 计算中间点
-            mid_x = (start[0] + goal[0]) / 2
-            mid_y = (start[1] + goal[1]) / 2
-            mid_theta = (start[2] + goal[2]) / 2 if len(start) > 2 and len(goal) > 2 else 0
-            
-            # 寻找可行的中间点
-            middle_point = self._find_feasible_waypoint(start, goal, (mid_x, mid_y, mid_theta))
-            
-            if not middle_point:
-                return None
-            
-            print(f"    分段点: {middle_point}")
-            
-            # 分段1: start -> middle
-            self._reset_planner()
-            self._init_map_data()
-            if not self._calc_heuristic_map_fast(middle_point):
-                return None
-            
-            segment1 = self._astar_search_simplified(start, middle_point, 5000)
-            if not segment1:
-                return None
-            
-            # 分段2: middle -> goal  
-            self._reset_planner()
-            self._init_map_data()
-            if not self._calc_heuristic_map_fast(goal):
-                return None
-                
-            segment2 = self._astar_search_simplified(middle_point, goal, 5000)
-            if not segment2:
-                return None
-            
-            # 合并路径
-            complete_path = segment1[:-1] + segment2  # 避免重复中间点
-            
-            # 基础平滑
-            smoothed_path = self._basic_smooth_path(complete_path)
-            
-            print(f"    分段规划完成: {len(segment1)} + {len(segment2)} = {len(smoothed_path)} 点")
-            return smoothed_path
-            
-        except Exception as e:
-            print(f"    分段规划失败: {e}")
-            return None
-    
-    def _find_feasible_waypoint(self, start, goal, initial_mid):
-        """寻找可行的路径点"""
-        candidates = [
-            initial_mid,
-            (initial_mid[0] + 10, initial_mid[1], initial_mid[2]),
-            (initial_mid[0] - 10, initial_mid[1], initial_mid[2]),
-            (initial_mid[0], initial_mid[1] + 10, initial_mid[2]),
-            (initial_mid[0], initial_mid[1] - 10, initial_mid[2]),
-        ]
-        
-        for candidate in candidates:
-            if self._check_point_valid(candidate):
-                return candidate
-        
-        # 如果都不可行，使用简单中点
-        return ((start[0] + goal[0]) / 2, (start[1] + goal[1]) / 2, 0)
-    
-    def _simplified_parameter_planning(self, start, goal):
-        """使用简化参数的规划"""
-        try:
-            print("    使用简化参数重试...")
-            
-            # 临时调整搜索参数
-            original_grid_res = self.xy_grid_resolution
-            original_angle_res = self.theta_grid_resolution
-            original_step_size = self.step_size
-            
-            # 放大网格分辨率，减少搜索空间
-            self.xy_grid_resolution = 4.0  # 进一步放大
-            self.theta_grid_resolution = math.radians(45)  # 减少角度精度
-            self.step_size = 3.0  # 增大步长
-            
-            try:
-                self._reset_planner()
-                self._init_map_data()
-                
-                if self._calc_heuristic_map_fast(goal):
-                    path = self._astar_search_simplified(start, goal, 8000)
-                    
-                    if path:
-                        # 恢复参数
-                        self.xy_grid_resolution = original_grid_res
-                        self.theta_grid_resolution = original_angle_res
-                        self.step_size = original_step_size
-                        
-                        # 密化路径
-                        dense_path = self._densify_path(path)
-                        smoothed_path = self._basic_smooth_path(dense_path)
-                        
-                        print(f"    简化参数规划完成: {len(smoothed_path)} 点")
-                        return smoothed_path
-            
-            finally:
-                # 确保恢复原参数
-                self.xy_grid_resolution = original_grid_res
-                self.theta_grid_resolution = original_angle_res
-                self.step_size = original_step_size
-            
-            return None
-            
-        except Exception as e:
-            print(f"    简化参数规划失败: {e}")
-            return None
-    
-    def _calc_heuristic_map_fast(self, goal):
-        """快速启发式地图计算"""
-        try:
-            goal_x_grid = int(goal[0] / self.xy_grid_resolution)
-            goal_y_grid = int(goal[1] / self.xy_grid_resolution)
-            
-            open_2d = [(0, goal_x_grid, goal_y_grid)]
-            self.h_cost_map = {}
-            
-            max_nodes = 2000  # 限制节点数量
-            processed = 0
-            
-            while open_2d and processed < max_nodes:
-                current_cost, x, y = heapq.heappop(open_2d)
-                current_key = f"{x},{y}"
-                
-                if current_key in self.h_cost_map:
-                    continue
-                
-                self.h_cost_map[current_key] = current_cost
-                processed += 1
-                
-                # 只检查4个方向，提高速度
-                for dx, dy in [(1, 0), (0, 1), (-1, 0), (0, -1)]:
-                    nx, ny = x + dx, y + dy
-                    next_key = f"{nx},{ny}"
-                    
-                    if next_key in self.bound_set or self._is_out_of_bounds(nx, ny):
-                        continue
-                    
-                    if next_key in self.h_cost_map:
-                        continue
-                    
-                    move_cost = self.xy_grid_resolution
-                    new_cost = current_cost + move_cost
-                    
-                    heapq.heappush(open_2d, (new_cost, nx, ny))
-            
-            return len(self.h_cost_map) > 50
-            
-        except Exception:
-            return False
-    def _is_out_of_bounds(self, x_grid, y_grid):
-        """检查网格坐标是否越界"""
-        x_real = x_grid * self.xy_grid_resolution
-        y_real = y_grid * self.xy_grid_resolution
-        
-        return (x_real < 0 or x_real >= self.env.width or 
-                y_real < 0 or y_real >= self.env.height)    
-    def _astar_search_simplified(self, start, goal, max_iterations):
-        """简化的A*搜索"""
-        try:
-            self._init_search(start)
-            
-            iterations = 0
-            best_node = None
-            best_distance = float('inf')
-            
-            while self.open_list and iterations < max_iterations:
-                current_node = self._get_min_cost_node()
-                if current_node is None:
-                    break
-                
-                grid_key = self._get_grid_key(current_node)
-                self.close_dict[grid_key] = current_node
-                
-                distance_to_goal = math.sqrt(
-                    (current_node.x - goal[0])**2 + (current_node.y - goal[1])**2
-                )
-                
-                if distance_to_goal < best_distance:
-                    best_distance = distance_to_goal
-                    best_node = current_node
-                
-                # 更早尝试RS连接
-                if distance_to_goal < self.config['rs_fitting_radius'] * 1.5:
-                    rs_path = self._try_rs_connection(current_node, goal)
-                    if rs_path:
-                        astar_path = self._trace_path(current_node)
-                        return astar_path[:-1] + rs_path
-                
-                # 简化的节点扩展
-                self._expand_node_simplified(current_node, goal)
-                
-                iterations += 1
-                
-                # 更频繁的进度报告
-                if iterations % 500 == 0:
-                    print(f"      迭代 {iterations}, 距离: {best_distance:.1f}")
-            
-            # 如果找到了比较近的解
-            if best_node and best_distance < 50.0:
-                return self._trace_path(best_node)
-            
-            return None
-            
-        except Exception as e:
-            print(f"      简化搜索异常: {e}")
-            return None
-    
-    def _expand_node_simplified(self, node, goal):
-        """简化的节点扩展"""
-        # 减少转向角数量
-        angle_discrete_num = 3  # 只使用3个转向角
-        delta_steering = ((self.config['max_steering'] - self.config['min_steering']) / 
-                         (angle_discrete_num - 1))
-        
-        for i in range(angle_discrete_num):
-            steering = self.config['min_steering'] + i * delta_steering
-            
-            # 优先前进
-            for direction in [0, 1]:  
-                next_node = self._basic_vehicle_dynamics(node, direction, steering)
-                
-                if not next_node or not self._is_state_valid(next_node):
-                    continue
-                
-                # 简化的代价计算
-                distance_cost = self.step_size
-                if direction == 1:  # 倒车惩罚
-                    distance_cost *= 1.5
-                
-                next_node.cost = node.cost + distance_cost
-                
-                grid_key = self._get_grid_key(next_node)
-                
-                if grid_key in self.close_dict:
-                    continue
-                
-                if grid_key in self.open_dict:
-                    existing_node = self.open_dict[grid_key]
-                    if next_node.cost < existing_node.cost:
-                        existing_node.cost = next_node.cost
-                        existing_node.parent = node
-                        existing_node.parent_id = node.id
-                        existing_node.f = existing_node.cost + existing_node.h
-                else:
-                    self._calc_h_value(next_node)
-                    next_node.f = next_node.cost + next_node.h
-                    
-                    heapq.heappush(self.open_list, next_node)
-                    self.open_dict[grid_key] = next_node
-    
-    def _densify_path(self, path):
-        """密化路径"""
-        if len(path) < 2:
-            return path
-        
-        dense_path = [path[0]]
-        target_spacing = 1.5
-        
-        for i in range(len(path) - 1):
-            current = path[i]
-            next_point = path[i + 1]
-            
-            distance = math.sqrt(
-                (next_point[0] - current[0])**2 + 
-                (next_point[1] - current[1])**2
-            )
-            
-            if distance > target_spacing:
-                num_inserts = int(distance / target_spacing)
-                
-                for j in range(1, num_inserts + 1):
-                    t = j / (num_inserts + 1)
-                    x = current[0] + t * (next_point[0] - current[0])
-                    y = current[1] + t * (next_point[1] - current[1])
-                    theta = current[2] + t * (next_point[2] - current[2])
-                    dense_path.append((x, y, theta))
-            
-            dense_path.append(next_point)
-        
-        return dense_path
-    
-    def _basic_smooth_path(self, path):
-        """基础路径平滑"""
-        if len(path) < 3:
-            return path
-        
-        smoothed = [path[0]]
-        
-        for i in range(1, len(path) - 1):
-            prev_point = path[i-1]
-            curr_point = path[i]
-            next_point = path[i+1]
-            
-            # 轻微平滑
-            smooth_x = 0.8 * curr_point[0] + 0.1 * (prev_point[0] + next_point[0])
-            smooth_y = 0.8 * curr_point[1] + 0.1 * (prev_point[1] + next_point[1])
-            smooth_theta = curr_point[2]
-            
-            smoothed.append((smooth_x, smooth_y, smooth_theta))
-        
-        smoothed.append(path[-1])
-        return smoothed
     
     def _fallback_simple_planning(self, start, goal):
         """简单回退规划"""
@@ -1073,10 +718,10 @@ class HybridAStarPlanner:
                         y_grid = int(y / self.xy_grid_resolution)
                         self.bound_set.add(f"{x_grid},{y_grid}")
     
-    def _calc_heuristic_map_optimized(self, goal, is_long_distance=False):
+    def _calc_heuristic_map_optimized(self, goal):
         """优化的启发式地图计算"""
         if self.debug:
-            print(f"计算启发式地图... 长距离模式: {is_long_distance}")
+            print(f"计算启发式地图...")
         
         start_time = time.time()
         
@@ -1086,15 +731,9 @@ class HybridAStarPlanner:
         open_2d = [(0, goal_x_grid, goal_y_grid)]
         self.h_cost_map = {}
         
-        # 动态调整计算参数
-        if is_long_distance:
-            max_time = 25.0  # 增加长距离的计算时间
-            min_nodes = 200  # 降低最小节点要求
-            max_nodes = 5000  # 限制最大节点数
-        else:
-            max_time = 18.0
-            min_nodes = 100
-            max_nodes = 8000
+        max_time = 18.0
+        min_nodes = 100
+        max_nodes = 8000
         
         processed_nodes = 0
         
@@ -1113,14 +752,9 @@ class HybridAStarPlanner:
             self.h_cost_map[current_key] = current_cost
             processed_nodes += 1
             
-            # 根据距离调整搜索方向
-            if is_long_distance:
-                # 长距离：优先4个主方向
-                directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
-            else:
-                # 短距离：8个方向
-                directions = [(1, 0), (0, 1), (-1, 0), (0, -1),
-                             (1, 1), (1, -1), (-1, 1), (-1, -1)]
+            # 8个方向搜索
+            directions = [(1, 0), (0, 1), (-1, 0), (0, -1),
+                         (1, 1), (1, -1), (-1, 1), (-1, -1)]
             
             for dx, dy in directions:
                 nx, ny = x + dx, y + dy
@@ -1146,28 +780,27 @@ class HybridAStarPlanner:
         
         return success
     
-    def _astar_search_adaptive(self, start, goal, max_iterations, is_long_distance):
+    def _is_out_of_bounds(self, x_grid, y_grid):
+        """检查网格坐标是否越界"""
+        x_real = x_grid * self.xy_grid_resolution
+        y_real = y_grid * self.xy_grid_resolution
+        
+        return (x_real < 0 or x_real >= self.env.width or 
+                y_real < 0 or y_real >= self.env.height)
+    
+    def _astar_search_adaptive(self, start, goal, max_iterations):
         """自适应A*搜索"""
         if max_iterations is None:
             max_iterations = self.config['max_iterations']
         
-        # 根据距离调整搜索策略
-        if is_long_distance:
-            print("  使用长距离自适应搜索...")
-            # 长距离：更积极的RS拟合
-            rs_radius = self.config['rs_fitting_radius'] * 1.5
-            progress_report_interval = 500
-        else:
-            rs_radius = self.config['rs_fitting_radius']
-            progress_report_interval = 1000
+        rs_radius = self.config['rs_fitting_radius']
+        progress_report_interval = 1000
         
         self._init_search(start)
         
         iterations = 0
         best_node = None
         best_distance = float('inf')
-        stuck_counter = 0
-        last_best_distance = float('inf')
         
         while self.open_list and iterations < max_iterations:
             current_node = self._get_min_cost_node()
@@ -1184,20 +817,6 @@ class HybridAStarPlanner:
             if distance_to_goal < best_distance:
                 best_distance = distance_to_goal
                 best_node = current_node
-                stuck_counter = 0
-            else:
-                stuck_counter += 1
-            
-            # 检测停滞并调整策略
-            if is_long_distance and stuck_counter > 1000:
-                print(f"    检测到搜索停滞，当前最佳距离: {best_distance:.1f}")
-                if best_distance < 60.0:  # 如果已经比较接近，尝试强制连接
-                    rs_path = self._try_rs_connection(best_node, goal)
-                    if rs_path:
-                        astar_path = self._trace_path(best_node)
-                        return astar_path[:-1] + rs_path
-                # 重置计数器，继续搜索
-                stuck_counter = 0
             
             # RS拟合检查
             if distance_to_goal < rs_radius:
@@ -1213,10 +832,7 @@ class HybridAStarPlanner:
                     return complete_path
             
             # 节点扩展
-            if is_long_distance:
-                self._expand_node_simplified(current_node, goal)
-            else:
-                self._expand_node(current_node, goal)
+            self._expand_node(current_node, goal)
             
             iterations += 1
             
@@ -1226,8 +842,7 @@ class HybridAStarPlanner:
         
         self.stats['nodes_expanded'] = iterations
         
-        # 根据距离类型调整接受标准
-        accept_distance = 50.0 if is_long_distance else 30.0
+        accept_distance = 30.0
         
         if best_node and best_distance < accept_distance:
             if self.debug:
@@ -1298,68 +913,11 @@ class HybridAStarPlanner:
 
     def _calc_heuristic_map(self, goal):
         """计算启发式地图 - 重定向到优化版本"""
-        return self._calc_heuristic_map_optimized(goal, is_long_distance=False)
+        return self._calc_heuristic_map_optimized(goal)
     
     def _astar_search(self, start, goal, max_iterations):
         """A*搜索算法 - 重定向到自适应版本"""
-        distance = math.sqrt((goal[0] - start[0])**2 + (goal[1] - start[1])**2)
-        is_long_distance = distance > min(self.env.width, self.env.height) * 0.6
-        
-        return self._astar_search_adaptive(start, goal, max_iterations, is_long_distance)
-        """A*搜索算法"""
-        if max_iterations is None:
-            max_iterations = self.config['max_iterations']
-        
-        self._init_search(start)
-        
-        iterations = 0
-        best_node = None
-        best_distance = float('inf')
-        
-        while self.open_list and iterations < max_iterations:
-            current_node = self._get_min_cost_node()
-            if current_node is None:
-                break
-            
-            grid_key = self._get_grid_key(current_node)
-            self.close_dict[grid_key] = current_node
-            
-            distance_to_goal = math.sqrt(
-                (current_node.x - goal[0])**2 + (current_node.y - goal[1])**2
-            )
-            
-            if distance_to_goal < best_distance:
-                best_distance = distance_to_goal
-                best_node = current_node
-            
-            if distance_to_goal < self.config['rs_fitting_radius']:
-                rs_path = self._try_rs_connection(current_node, goal)
-                if rs_path:
-                    if self.debug:
-                        print(f"RS曲线连接成功，迭代次数: {iterations}")
-                    
-                    astar_path = self._trace_path(current_node)
-                    complete_path = astar_path[:-1] + rs_path  
-                    
-                    self.stats['nodes_expanded'] = iterations
-                    return complete_path
-            
-            self._expand_node(current_node, goal)
-            
-            iterations += 1
-            
-            if self.debug and iterations % 1000 == 0:
-                print(f"迭代 {iterations}, 开集大小: {len(self.open_list)}, "
-                      f"最佳距离: {best_distance:.1f}")
-        
-        self.stats['nodes_expanded'] = iterations
-        
-        if best_node and best_distance < 35.0:  # 放宽距离要求
-            if self.debug:
-                print(f"返回最接近路径，距离目标: {best_distance:.1f}")
-            return self._trace_path(best_node)
-        
-        return None
+        return self._astar_search_adaptive(start, goal, max_iterations)
     
     def _init_search(self, start):
         """初始化搜索"""
@@ -1746,7 +1304,7 @@ class HybridAStarPlanner:
 # 测试函数
 def test_mining_optimized_hybrid_astar():
     """测试露天矿优化的混合A*规划器"""
-    print("=== 测试露天矿优化混合A*规划器（长距离增强版） ===")
+    print("=== 测试露天矿优化混合A*规划器（简化版） ===")
     
     class TestEnv:
         def __init__(self, width=150, height=150):
@@ -1786,7 +1344,7 @@ def test_mining_optimized_hybrid_astar():
             'expected_difficulty': 'medium'
         },
         {
-            'name': '长距离露天矿测试（增强版）',
+            'name': '长距离露天矿测试',
             'start': (10, 130, 0),
             'goal': (130, 10, math.pi),
             'expected_difficulty': 'hard'
@@ -1898,10 +1456,9 @@ def test_mining_optimized_hybrid_astar():
         print("⚠️  成功率较低，建议进一步调优")
     
     print("\n优化特性总结:")
-    print("✓ 长距离分层规划策略")
-    print("✓ 自适应搜索参数调整") 
+    print("✓ 统一的标准规划算法")
+    print("✓ 针对露天矿的约束放宽") 
     print("✓ 多级回退机制")
-    print("✓ 针对露天矿的约束放宽")
     print("✓ 快速启发式地图计算")
     
     return success_count >= len(test_cases) * 0.75  # 75%成功率视为通过
